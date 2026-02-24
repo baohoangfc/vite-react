@@ -5,7 +5,7 @@ import { Wallet, Play, Pause, BarChart2, Zap, WifiOff, Wifi, XCircle, History, M
 const CONFIG = {
   SYMBOL: 'BTCUSDT',
   INTERVAL: '1m',       
-  HTF_INTERVALS: ['15m', '1h', '4h', '1d'], // Đa khung thời gian
+  HTF_INTERVALS: ['15m', '1h', '4h', '1d'], 
   LIMIT_CANDLES: 80, 
   
   RSI_PERIOD: 14,
@@ -118,7 +118,6 @@ const generateMockCandle = (lastCandle: Candle | null): Candle => {
 // --- MAIN COMPONENT ---
 export default function BitcoinTradingBot() {
   const [candles, setCandles] = useState<Candle[]>([]);
-  // MTF States
   const [c15m, setC15m] = useState<Candle[]>([]);
   const [c1h, setC1h] = useState<Candle[]>([]);
   const [c4h, setC4h] = useState<Candle[]>([]);
@@ -134,17 +133,17 @@ export default function BitcoinTradingBot() {
   const [isSimulation, setIsSimulation] = useState(false);
   const [mode, setMode] = useState<'AUTO' | 'MANUAL'>('AUTO');
   const [activeTab, setActiveTab] = useState<'LOGS' | 'HISTORY'>('LOGS');
-  const [nextLogTime, setNextLogTime] = useState<number>(0);
   const [resetConfirm, setResetConfirm] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   
-  // States from Local Storage
+  // Trick để force render cho timer (Fix lỗi unused variable)
+  const [, setForceRender] = useState<number>(0);
+  
   const [account, setAccount] = useState(() => loadFromStorage('btcBot_account', { balance: CONFIG.INITIAL_BALANCE, pnlHistory: 0 }));
   const [position, setPosition] = useState<{ type: 'LONG' | 'SHORT'; entryPrice: number; margin: number; size: number; tpPrice: number; slPrice: number; liquidationPrice: number; openFee: number; openTime: number; } | null>(() => loadFromStorage('btcBot_position', null));
   const [history, setHistory] = useState<TradeHistoryItem[]>(() => loadFromStorage('btcBot_history', []));
   const [logs, setLogs] = useState<{msg: string, type: string}[]>(() => loadFromStorage('btcBot_logs', []));
   
-  // Telegram Settings
   const [tgToken, setTgToken] = useState(() => loadFromStorage('btcBot_tgToken', ''));
   const [tgChatId, setTgChatId] = useState(() => loadFromStorage('btcBot_tgChatId', ''));
 
@@ -167,7 +166,6 @@ export default function BitcoinTradingBot() {
       tgConfigRef.current = { token: tgToken, chatId: tgChatId };
   }, [tgToken, tgChatId]);
 
-  // --- TELEGRAM NOTIFICATION ---
   const sendTelegram = async (text: string) => {
       const { token, chatId } = tgConfigRef.current;
       if (!token || !chatId) return;
@@ -208,11 +206,11 @@ export default function BitcoinTradingBot() {
       if (isRunning) {
           setIsRunning(false);
           addLog("Đã DỪNG Bot. Tạm ngưng vào lệnh.", 'warning');
-          setNextLogTime(0);
+          setForceRender(Date.now());
       } else {
           setIsRunning(true);
           lastAnalysisLogTime.current = 0; 
-          setNextLogTime(Date.now());
+          setForceRender(Date.now());
           addLog("Đã CHẠY Bot. Bắt đầu quét thị trường...", 'info');
       }
   };
@@ -222,7 +220,6 @@ export default function BitcoinTradingBot() {
     setLogs(prev => [...prev.slice(-99), { msg: `[${timestamp}] ${message}`, type }]);
   };
 
-  // --- KẾT NỐI WEBSOCKET 5 LUỒNG ---
   useEffect(() => {
     let isMounted = true;
     if (logs.length === 0) addLog("Khởi tạo hệ thống MTF (1m, 15m, 1H, 4H, 1D)...", 'info');
@@ -275,7 +272,7 @@ export default function BitcoinTradingBot() {
         if (isMounted) {
             addLog("Lỗi mạng. Chạy chế độ GIẢ LẬP Offline.", 'warning');
             setIsSimulation(true);
-            setCandles(Array.from({length: CONFIG.LIMIT_CANDLES}, (_, i) => generateMockCandle(null)).map((c, i) => ({...c, time: Date.now() - (CONFIG.LIMIT_CANDLES - i)*60000})));
+            setCandles(Array.from({length: CONFIG.LIMIT_CANDLES}, () => generateMockCandle(null)).map((c, idx) => ({...c, time: Date.now() - (CONFIG.LIMIT_CANDLES - idx)*60000})));
         }
       }
     };
@@ -286,9 +283,9 @@ export default function BitcoinTradingBot() {
         isMounted = false;
         Object.values(wsRefs.current).forEach(ws => ws.close());
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // --- XỬ LÝ DỮ LIỆU & BOT LOGIC ---
   useEffect(() => {
       if (candles.length === 0) return;
 
@@ -315,13 +312,12 @@ export default function BitcoinTradingBot() {
       setAnalysis(newAnalysis);
 
       if (isRunning) {
-          if (position) checkExit(currentP, position, account);
+          if (position) checkExit(currentP, position);
           else if (mode === 'AUTO') runBotStrategy(currentP, lastCandle.volume, newAnalysis, account);
       }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [candles, c15m, c1h, c4h, c1d]); 
 
-  // --- TRADING LOGIC ---
   const runBotStrategy = (price: number, vol: number, a: Analysis, currentAcc: typeof account) => {
     const now = Date.now();
     const shouldLogAnalysis = lastAnalysisLogTime.current === 0 || (now - lastAnalysisLogTime.current > 60000);
@@ -350,14 +346,14 @@ export default function BitcoinTradingBot() {
     const canShort = isVolOk && a.rsi > CONFIG.RSI_OVERBOUGHT && smcShortSignal && isMtfShortAligned;
 
     if (canLong) {
-      const reasonStr = `${isInBullishOB ? 'Test Bullish OB' : 'Lấp FVG Tăng'} + Điểm MTF: ${upScore}/4`;
+      const reasonStr = `${isInBullishOB ? 'Test Bullish OB' : 'Lấp FVG Tăng'} + Điểm MTF: ${upScore}/4 + Vol ${volRatio}x`;
       executeOrder('LONG', price, currentAcc.balance, reasonStr);
       addLog(`🚀 SMC LONG: ${reasonStr}`, 'success');
       lastAnalysisLogTime.current = now; 
       return;
     }
     if (canShort) {
-      const reasonStr = `${isInBearishOB ? 'Test Bearish OB' : 'Lấp FVG Giảm'} + Điểm MTF: ${downScore}/4`;
+      const reasonStr = `${isInBearishOB ? 'Test Bearish OB' : 'Lấp FVG Giảm'} + Điểm MTF: ${downScore}/4 + Vol ${volRatio}x`;
       executeOrder('SHORT', price, currentAcc.balance, reasonStr);
       addLog(`🔥 SMC SHORT: ${reasonStr}`, 'danger');
       lastAnalysisLogTime.current = now;
@@ -405,7 +401,6 @@ export default function BitcoinTradingBot() {
     setAccount(prev => ({ ...prev, balance: prev.balance - margin }));
     setPosition({ type, entryPrice: price, margin: realMargin, size, tpPrice: tp, slPrice: sl, liquidationPrice: liq, openFee: fee, openTime: Date.now() });
 
-    // Bắn thông báo Telegram
     const msg = `🚀 <b>BOT MỞ LỆNH ${type}</b>\nCặp: #${CONFIG.SYMBOL}\nGiá Entry: <b>${price.toFixed(2)}</b>\nKý quỹ: ${realMargin.toFixed(2)} USDT\nĐòn bẩy: x${CONFIG.LEVERAGE}\nTP: ${tp.toFixed(2)} | SL: ${sl.toFixed(2)}\nLý do: <i>${reason}</i>`;
     sendTelegram(msg);
   };
@@ -430,13 +425,12 @@ export default function BitcoinTradingBot() {
       const logType = finalPnl > 0 ? 'success' : 'danger';
       addLog(`💰 ĐÓNG ${position.type} (${reason}): ${netProfit > 0 ? '+' : ''}${netProfit.toFixed(2)} USDT (Net)`, logType);
 
-      // Bắn thông báo Telegram
       const icon = netProfit > 0 ? '✅' : '❌';
       const msg = `${icon} <b>BOT ĐÓNG LỆNH ${position.type}</b>\nCặp: #${CONFIG.SYMBOL}\nGiá chốt: <b>${currentPrice.toFixed(2)}</b>\nLợi nhuận ròng: <b>${netProfit > 0 ? '+' : ''}${netProfit.toFixed(2)} USDT</b> (${(netProfit / position.margin * 100).toFixed(2)}%)\nLý do: <i>${reason}</i>\nSố dư mới: ${newBalance.toFixed(2)} USDT`;
       sendTelegram(msg);
   };
 
-  const checkExit = (price: number, pos: NonNullable<typeof position>, acc: typeof account) => {
+  const checkExit = (price: number, pos: NonNullable<typeof position>) => {
     let reason = '', pnl = 0;
     if (pos.type === 'LONG') {
       pnl = (price - pos.entryPrice) * (pos.size / pos.entryPrice);
@@ -468,11 +462,10 @@ export default function BitcoinTradingBot() {
 
   useEffect(() => {
       if (!isRunning) return;
-      const timer = setInterval(() => setNextLogTime(Date.now()), 1000);
+      const timer = setInterval(() => setForceRender(Date.now()), 1000);
       return () => clearInterval(timer);
   }, [isRunning]);
 
-  // --- RENDER COMPONENT CON CHO MTF BADGE ---
   const MtfBadge = ({ label, trend }: { label: string, trend: Trend }) => {
       const isUp = trend === 'UP';
       const isDown = trend === 'DOWN';
@@ -535,7 +528,7 @@ export default function BitcoinTradingBot() {
           const bodyTopPercent = ((maxPrice - Math.max(c.open, c.close)) / range) * 100;
           const bodyHeightPercent = ((Math.abs(c.open - c.close)) / range) * 100;
           return (
-            <div key={i} className="flex-1 relative mx-[1px] group z-10" style={{ height: '100%' }}>
+            <div key={`candle-${i}`} className="flex-1 relative mx-[1px] group z-10" style={{ height: '100%' }}>
               <div className={`absolute w-[1px] left-1/2 -translate-x-1/2 ${c.isGreen ? 'bg-[#0ecb81]' : 'bg-[#f6465d]'}`} style={{ height: `${heightPercent}%`, top: `${topPercent}%` }}></div>
               <div className={`absolute w-full ${c.isGreen ? 'bg-[#0ecb81]' : 'bg-[#f6465d]'}`} style={{ height: `${Math.max(bodyHeightPercent, 0.5)}%`, top: `${bodyTopPercent}%` }}></div>
             </div>
@@ -555,7 +548,6 @@ export default function BitcoinTradingBot() {
   return (
     <div className="min-h-screen bg-[#0b0e11] text-gray-100 font-sans p-2 sm:p-4 md:p-6 relative">
       
-      {/* SETTINGS MODAL */}
       {showSettings && (
         <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4">
           <div className="bg-[#1e2329] p-6 rounded-lg border border-gray-700 max-w-md w-full shadow-2xl">
@@ -697,7 +689,6 @@ export default function BitcoinTradingBot() {
                </div>
             </div>
 
-            {/* BẢNG ĐIỂM MTF TRỰC QUAN */}
             <div className="bg-[#1e2329] p-2 rounded-lg border border-gray-800 col-span-2 flex flex-col justify-center">
                <span className="text-[10px] text-gray-400 block mb-1 text-center font-semibold">ĐỒNG THUẬN ĐA KHUNG (Cần 3/4 điểm)</span>
                <div className="grid grid-cols-4 gap-1">
@@ -733,8 +724,8 @@ export default function BitcoinTradingBot() {
                {activeTab === 'LOGS' ? (
                    <div className="space-y-2">
                        {logs.length > 25 && <div className="text-center text-gray-700 text-[10px] py-1 italic">... lịch sử cũ ...</div>}
-                       {logs.slice(-25).map((log, i) => (
-                         <div key={i} className={`text-[11px] sm:text-xs border-l-2 pl-3 py-2 leading-relaxed rounded-r
+                       {logs.slice(-25).map((log, idx) => (
+                         <div key={`log-${idx}`} className={`text-[11px] sm:text-xs border-l-2 pl-3 py-2 leading-relaxed rounded-r
                             ${log.type === 'success' ? 'border-green-500 text-green-300 bg-green-900/10' : 
                               log.type === 'danger' ? 'border-red-500 text-red-300 bg-red-900/10' : 
                               log.type === 'analysis' ? 'border-blue-500 text-blue-200 bg-blue-900/5 italic' : 'border-gray-600 text-gray-400'}`}>
