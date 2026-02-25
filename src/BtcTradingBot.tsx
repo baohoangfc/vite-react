@@ -273,19 +273,24 @@ export default function BitcoinTradingBot() {
     );
   };
 
+  const getSec = () => {
+      const rem = 60000 - (Date.now() - lastALogTime.current);
+      return rem > 0 ? Math.ceil(rem / 1000) : 0;
+  };
+
   return (
     <div className="min-h-screen bg-[#0b0e11] text-gray-100 font-sans p-2 sm:p-4 md:p-6 flex flex-col gap-4">
       {showSettings && (
         <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4">
           <div className="bg-[#1e2329] p-6 rounded-lg border border-gray-700 max-w-md w-full shadow-2xl">
-              <h2 className="text-lg font-bold mb-4">Cấu hình</h2>
+              <h2 className="text-lg font-bold mb-4 text-white">Cấu hình</h2>
               <div className="space-y-3">
-                  <input value={tgToken} onChange={e => setTgToken(e.target.value)} placeholder="Bot Token" className="w-full bg-[#0b0e11] border border-gray-700 rounded p-2 text-sm text-white" />
-                  <input value={tgChatId} onChange={e => setTgChatId(e.target.value)} placeholder="Chat ID" className="w-full bg-[#0b0e11] border border-gray-700 rounded p-2 text-sm text-white" />
+                  <input value={tgToken} onChange={e => setTgToken(e.target.value)} placeholder="Bot Token" className="w-full bg-[#0b0e11] border border-gray-700 rounded p-2 text-sm text-white outline-none focus:border-blue-500" />
+                  <input value={tgChatId} onChange={e => setTgChatId(e.target.value)} placeholder="Chat ID" className="w-full bg-[#0b0e11] border border-gray-700 rounded p-2 text-sm text-white outline-none focus:border-blue-500" />
               </div>
               <div className="mt-4 flex justify-end gap-2">
-                  <button onClick={() => setShowSettings(false)} className="px-4 py-2 text-sm">Hủy</button>
-                  <button onClick={() => { setShowSettings(false); addLog("Đã lưu cài đặt.", "success"); sendTelegram("✅ Bot đã kết nối!"); }} className="px-4 py-2 bg-blue-600 rounded text-sm font-bold">Lưu</button>
+                  <button onClick={() => setShowSettings(false)} className="px-4 py-2 text-sm text-gray-400 hover:text-white transition-colors">Hủy</button>
+                  <button onClick={() => { setShowSettings(false); addLog("Đã lưu cài đặt.", "success"); sendTelegram("✅ Bot đã kết nối!"); }} className="px-4 py-2 bg-blue-600 rounded text-sm font-bold hover:bg-blue-700 transition-colors">Lưu</button>
               </div>
           </div>
         </div>
@@ -312,7 +317,7 @@ export default function BitcoinTradingBot() {
             <div className="bg-[#1e2329] p-4 rounded-lg border border-gray-800 relative group overflow-hidden">
               <span className="text-[10px] text-gray-500 uppercase font-bold">Ví USDT</span>
               <p className="text-lg font-mono text-white">${account.balance.toFixed(2)}</p>
-              <button onClick={() => { localStorage.clear(); window.location.reload(); }} className="absolute top-2 right-2 text-gray-700 hover:text-red-500"><RefreshCw size={12}/></button>
+              <button onClick={() => { localStorage.clear(); window.location.reload(); }} className="absolute top-2 right-2 text-gray-700 hover:text-red-500 transition-colors"><RefreshCw size={12}/></button>
             </div>
             <div className={`bg-[#1e2329] p-4 rounded-lg border transition-all duration-300 ${position ? 'border-blue-500' : 'border-gray-800 opacity-50'}`}>
               <span className="text-[10px] text-gray-500 uppercase font-bold">Lệnh {position?.type || 'Trống'}</span>
@@ -339,14 +344,20 @@ export default function BitcoinTradingBot() {
         <div className="lg:col-span-5 h-[520px] flex flex-col">
           <div className="bg-[#1e2329] rounded-lg border border-gray-800 flex flex-col flex-1 overflow-hidden">
              <div className="flex border-b border-gray-800 bg-[#252a30]">
-                <button onClick={() => setActiveTab('LOGS')} className={`flex-1 py-3 text-xs font-bold ${activeTab === 'LOGS' ? 'bg-[#1e2329] text-blue-400 border-t-2 border-blue-400' : 'text-gray-500'}`}>NHẬT KÝ</button>
-                <button onClick={() => setActiveTab('HISTORY')} className={`flex-1 py-3 text-xs font-bold ${activeTab === 'HISTORY' ? 'bg-[#1e2329] text-yellow-400 border-t-2 border-yellow-400' : 'text-gray-500'}`}>LỊCH SỬ</button>
+                <button onClick={() => setActiveTab('LOGS')} className={`flex-1 py-3 text-xs font-bold transition-all ${activeTab === 'LOGS' ? 'bg-[#1e2329] text-blue-400 border-t-2 border-blue-400' : 'text-gray-500'}`}>NHẬT KÝ</button>
+                <button onClick={() => setActiveTab('HISTORY')} className={`flex-1 py-3 text-xs font-bold transition-all ${activeTab === 'HISTORY' ? 'bg-[#1e2329] text-yellow-400 border-t-2 border-yellow-400' : 'text-gray-500'}`}>LỊCH SỬ</button>
              </div>
+             {activeTab === 'LOGS' && isRunning && (
+                 <div className="px-3 py-1 bg-blue-900/10 text-[9px] text-blue-400 flex justify-between border-b border-blue-900/20 italic">
+                     <span className="flex items-center gap-1"><Clock size={10}/> Đang theo dõi...</span>
+                     <span>Quét sau: {getSec()}s</span>
+                 </div>
+             )}
              <div className="flex-1 overflow-y-auto p-3 bg-[#0b0e11] font-mono custom-scrollbar">
                {activeTab === 'LOGS' ? (
                    <div className="space-y-2">
                        {logs.map((log, idx) => (
-                         <div key={idx} className={`text-[10px] border-l-2 pl-2 py-1 leading-relaxed ${log.type === 'success' ? 'border-green-500 text-green-300' : log.type === 'danger' ? 'border-red-500 text-red-300' : log.type === 'analysis' ? 'border-blue-500 text-blue-200 italic' : 'border-gray-600 text-gray-400'}`}>{log.msg}</div>
+                         <div key={idx} className={`text-[10px] border-l-2 pl-2 py-1 leading-relaxed ${log.type === 'success' ? 'border-green-500 text-green-300 bg-green-900/5' : log.type === 'danger' ? 'border-red-500 text-red-300 bg-red-900/5' : log.type === 'analysis' ? 'border-blue-500 text-blue-200 italic' : 'border-gray-600 text-gray-400'}`}>{log.msg}</div>
                        ))}
                        <div ref={logsEndRef}/>
                    </div>
@@ -354,7 +365,7 @@ export default function BitcoinTradingBot() {
                    <div className="space-y-2">
                        {history.map((t) => (
                            <div key={t.id} className="bg-[#1e2329] p-2 rounded border border-gray-800 flex justify-between items-center text-[10px]">
-                               <div><span className={`font-bold ${t.type === 'LONG' ? 'text-green-500' : 'text-red-500'}`}>{t.type}</span><p className="text-gray-500 text-[8px]">{new Date(t.time).toLocaleTimeString()}</p></div>
+                               <div><span className={`font-bold ${t.type === 'LONG' ? 'text-green-500' : 'text-red-500'}`}>{t.type}</span><p className="text-gray-500 text-[8px]">{new Date(t.time).toLocaleString()}</p></div>
                                <div className="text-right"><p className={`font-bold ${t.pnl > 0 ? 'text-green-500' : 'text-red-500'}`}>{t.pnl.toFixed(2)} USDT</p></div>
                            </div>
                        ))}
