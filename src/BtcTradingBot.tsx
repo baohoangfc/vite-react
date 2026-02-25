@@ -62,23 +62,45 @@ const getSafeAppId = () => {
   return 'trading-bot-v3-safe-vercel';
 };
 const appId = getSafeAppId();
-
-// Đồng bộ đường dẫn an toàn tuyệt đối cho toàn bộ ứng dụng
 const APP_ID = appId;
 
 // ============================================================================
-// 2. CẤU HÌNH BOT
+// 2. CẤU HÌNH BOT & HÀM HỖ TRỢ TOÁN HỌC
 // ============================================================================
 const CONFIG = {
   SYMBOL: 'BTCUSDT',
   INTERVAL: '1m',       
   LIMIT_CANDLES: 60, 
+  RSI_PERIOD: 14,
   TP_PERCENT: 0.008, 
   SL_PERCENT: 0.004, 
   LEVERAGE: 50,
   INITIAL_BALANCE: 10000,
   FEE: 0.0004, 
-  HEARTBEAT_MS: 10 * 60 * 1000, 
+  HEARTBEAT_MS: 10 * 60 * 1000, // 10 phút
+  COOLDOWN_MS: 60 * 1000, // Cooldown 1 phút sau khi đóng lệnh
+};
+
+const calculateRSI = (candles: any[], period: number = 14) => {
+  if (!candles || candles.length < period + 1) return 50;
+  const prices = candles.map(c => Number(c.close));
+  let gains = 0, losses = 0;
+  for (let i = prices.length - period - 1; i < prices.length - 1; i++) {
+    const diff = prices[i + 1] - prices[i];
+    if (diff >= 0) gains += diff; else losses -= diff;
+  }
+  let avgGain = gains / period;
+  let avgLoss = losses / period;
+  const currentDiff = prices[prices.length - 1] - prices[prices.length - 2];
+  if (currentDiff >= 0) {
+    avgGain = (avgGain * (period - 1) + currentDiff) / period;
+    avgLoss = (avgLoss * (period - 1)) / period;
+  } else {
+    avgGain = (avgGain * (period - 1)) / period;
+    avgLoss = (avgLoss * (period - 1) - currentDiff) / period;
+  }
+  if (avgLoss === 0) return 100;
+  return 100 - (100 / (1 + (avgGain / avgLoss)));
 };
 
 // ============================================================================
@@ -91,11 +113,9 @@ function SetupScreen() {
   const handleSaveConfig = () => {
     try {
       let str = jsonInput.trim();
-      // Tách tự động nếu user copy dính chữ "const firebaseConfig = "
       if (str.includes('{') && str.includes('}')) {
         str = str.substring(str.indexOf('{'), str.lastIndexOf('}') + 1);
       }
-      // Parse an toàn từ chuỗi Javascript Object
       const parsedConfig = new Function('return ' + str)();
       
       if (!parsedConfig || !parsedConfig.apiKey || !parsedConfig.projectId) {
@@ -114,9 +134,8 @@ function SetupScreen() {
        <Database size={60} className="text-purple-500 mb-6 animate-pulse" />
        <h1 className="text-3xl font-black mb-3 text-center uppercase tracking-tighter">Kết nối Database</h1>
        <p className="text-gray-400 max-w-lg text-center mb-8 leading-relaxed text-sm">
-         Ứng dụng đã được đưa lên Vercel thành công! Để Bot bắt đầu chạy và lưu trữ số dư, vui lòng dán đoạn <b className="text-white">firebaseConfig</b> của bạn vào ô dưới đây. Nó sẽ được lưu cục bộ cực kỳ an toàn.
+         Dán đoạn <b className="text-white">firebaseConfig</b> của bạn vào ô dưới đây để khởi chạy Bot.
        </p>
-       
        <div className="w-full max-w-xl space-y-4">
          <textarea 
            value={jsonInput}
@@ -205,7 +224,6 @@ export default function BitcoinTradingBot() {
   
   const [showSettings, setShowSettings] = useState(false);
   const [isSavingSettings, setIsSavingSettings] = useState(false);
-  const [settingError, setSettingError] = useState('');
 
   const [account, setAccount] = useState({ balance: CONFIG.INITIAL_BALANCE, pnlHistory: 0 });
   const [position, setPosition] = useState<any>(null);
@@ -213,8 +231,21 @@ export default function BitcoinTradingBot() {
   const [logs, setLogs] = useState<any[]>([]);
   const [tgConfig, setTgConfig] = useState({ token: '', chatId: '' });
 
+  // Refs an toàn tránh dính stale closure & chống spam
   const rsiCache = useRef<number>(50);
   const logsEndRef = useRef<HTMLDivElement>(null);
+  const tgConfigRef = useRef(tgConfig);
+  const latestPriceRef = useRef(currentPrice);
+  const latestAccountRef = useRef(account);
+  
+  // Khóa Mutex & Cooldown
+  const isProcessingRef = useRef(false);
+  const lastTradeTimeRef = useRef<number>(0);
+
+  // Sync refs
+  useEffect(() => { tgConfigRef.current = tgConfig; }, [tgConfig]);
+  useEffect(() => { latestPriceRef.current = currentPrice; }, [currentPrice]);
+  useEffect(() => { latestAccountRef.current = account; }, [account]);
 
   // 1. Quản lý Auth
   useEffect(() => {
@@ -230,7 +261,7 @@ export default function BitcoinTradingBot() {
     return () => unsub();
   }, []);
 
-  // 2. Lắng nghe Database (Ép kiểu an toàn chống React Object Error)
+  // 2. Lắng nghe Database
   useEffect(() => {
     if (!user) return;
     const userRef = doc(db, 'artifacts', APP_ID, 'users', user.uid, 'account', 'data');
@@ -246,6 +277,7 @@ export default function BitcoinTradingBot() {
     });
 
     const unsubPos = onSnapshot(posRef, (d) => {
+      isProcessingRef.current = false; // Mở khóa khi Firebase xác nhận đã ghi xong
       if (d.exists() && d.data().active && d.data().details) setPosition(d.data().details);
       else setPosition(null);
     });
@@ -297,25 +329,33 @@ export default function BitcoinTradingBot() {
     return () => ws?.close();
   }, []);
 
-  // 4. Telegram Heartbeat
+  // 4. Telegram - Gửi thông báo & Heartbeat
   const sendTelegram = async (text: string) => {
-    if (!tgConfig.token || !tgConfig.chatId) return;
-    try { await fetch(`https://api.telegram.org/bot${tgConfig.token}/sendMessage`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: tgConfig.chatId, text, parse_mode: 'HTML' }) }); } catch (e) {}
+    const { token, chatId } = tgConfigRef.current;
+    if (!token || !chatId) return;
+    try { 
+      await fetch(`https://api.telegram.org/bot${token}/sendMessage`, { 
+        method: 'POST', 
+        headers: { 'Content-Type': 'application/json' }, 
+        body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'HTML' }) 
+      }); 
+    } catch (e) {}
   };
 
   useEffect(() => {
-    if (!isRunning || !user || !tgConfig.token) return;
+    if (!isRunning || !user) return;
     const heartbeat = setInterval(() => {
-      const msg = `💓 <b>NHỊP ĐẬP BOT</b>\n• Giá: ${currentPrice.toLocaleString()} USD\n• Ví: ${account.balance.toFixed(2)} USDT\n• Trạng thái: 🟢 Đang chạy`;
+      const msg = `💓 <b>NHỊP ĐẬP BOT</b>\n• Giá: ${latestPriceRef.current.toLocaleString()} USD\n• Ví: ${latestAccountRef.current.balance.toFixed(2)} USDT\n• Trạng thái: 🟢 Đang hoạt động tốt`;
       sendTelegram(msg);
-      addLog("Gửi trạng thái an toàn về Telegram.", "info");
+      addLog("Gửi trạng thái hoạt động về Telegram (10 phút).", "info");
     }, CONFIG.HEARTBEAT_MS);
     return () => clearInterval(heartbeat);
-  }, [isRunning, user, tgConfig, currentPrice, account.balance]);
+  }, [isRunning, user]); // Phụ thuộc tối giản để không bị reset timer
 
-  // 5. Logic Giao Dịch
+  // 5. Logic Giao Dịch Chống Spam
   useEffect(() => {
-    if (!isRunning || !user || currentPrice === 0) return;
+    if (!isRunning || !user || currentPrice === 0 || isProcessingRef.current) return;
+
     if (position) {
       const isL = String(position.type) === 'LONG';
       const entry = Number(position.entry);
@@ -327,37 +367,53 @@ export default function BitcoinTradingBot() {
       let r = '';
       if ((isL && currentPrice >= tp) || (!isL && currentPrice <= tp)) r = 'TAKE PROFIT';
       if ((isL && currentPrice <= sl) || (!isL && currentPrice >= sl)) r = 'STOP LOSS';
-      if (r) handleCloseOrder(r, pnl);
+      
+      if (r) {
+         isProcessingRef.current = true; // Khóa không cho quét tiếp
+         handleCloseOrder(r, pnl);
+      }
     } else {
-        rsiCache.current = 30 + Math.random() * 40; 
-        const rsi = rsiCache.current;
-        if (rsi < 35 || rsi > 65) handleOpenOrder(rsi < 35 ? 'LONG' : 'SHORT', rsi.toFixed(1));
+        // Cooldown 1 phút giữa 2 lệnh để tránh bắn noti liên tục nếu thị trường giật lag
+        if (Date.now() - lastTradeTimeRef.current < CONFIG.COOLDOWN_MS) return;
+
+        const rsi = calculateRSI(candles, CONFIG.RSI_PERIOD);
+        rsiCache.current = rsi;
+
+        if (rsi < 35 || rsi > 65) {
+            isProcessingRef.current = true; // Khóa
+            handleOpenOrder(rsi < 35 ? 'LONG' : 'SHORT', rsi.toFixed(1));
+        }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentPrice, isRunning, position]);
 
   const handleOpenOrder = async (type: 'LONG' | 'SHORT', rsiVal: string) => {
-    if (!user) return;
+    if (!user) { isProcessingRef.current = false; return; }
+    
     const margin = account.balance;
     const size = margin * CONFIG.LEVERAGE;
     const fee = size * CONFIG.FEE;
     const tp = type === 'LONG' ? currentPrice * (1 + CONFIG.TP_PERCENT) : currentPrice * (1 - CONFIG.TP_PERCENT);
     const sl = type === 'LONG' ? currentPrice * (1 - CONFIG.SL_PERCENT) : currentPrice * (1 + CONFIG.SL_PERCENT);
 
-    const details = { type: String(type), entry: Number(currentPrice), margin: Number(margin - fee), size: Number(size), tp: Number(tp), sl: Number(sl), openFee: Number(fee), time: Date.now(), signalDetail: { rsi: String(rsiVal), setup: "MTF Consensus" } };
+    const details = { type: String(type), entry: Number(currentPrice), margin: Number(margin - fee), size: Number(size), tp: Number(tp), sl: Number(sl), openFee: Number(fee), time: Date.now(), signalDetail: { rsi: String(rsiVal), setup: "RSI Reversal" } };
 
     try {
       await setDoc(doc(db, 'artifacts', APP_ID, 'users', user.uid, 'account', 'data'), { balance: 0 }, { merge: true });
       await setDoc(doc(db, 'artifacts', APP_ID, 'users', user.uid, 'position', 'active'), { active: true, details });
-      sendTelegram(`🚀 <b>MỞ ${type}</b>\n• Giá: ${currentPrice.toLocaleString()}\n• RSI: ${rsiVal}`);
+      
+      sendTelegram(`🚀 <b>MỞ ${type}</b>\n• Giá: ${currentPrice.toLocaleString()} USD\n• RSI: ${rsiVal}`);
       addLog(`MỞ ${type} (RSI: ${rsiVal})`, 'success');
     } catch (e: any) {
+      isProcessingRef.current = false;
       addLog(`Lỗi mở lệnh: ${e.message}`, 'danger');
     }
   };
 
   const handleCloseOrder = async (reason: string, pnl: number) => {
-    if (!user || !position) return;
+    if (!user || !position) { isProcessingRef.current = false; return; }
+    
+    lastTradeTimeRef.current = Date.now(); // Bắt đầu đếm giờ cooldown
     const fee = Number(position.size) * CONFIG.FEE;
     const net = Number(pnl) - fee - Number(position.openFee);
     const tradeId = Date.now().toString();
@@ -367,9 +423,11 @@ export default function BitcoinTradingBot() {
       await setDoc(doc(db, 'artifacts', APP_ID, 'users', user.uid, 'account', 'data'), { balance: account.balance + Number(position.margin) + (Number(pnl) - fee), pnlHistory: account.pnlHistory + net }, { merge: true });
       await setDoc(doc(db, 'artifacts', APP_ID, 'users', user.uid, 'position', 'active'), { active: false });
 
-      sendTelegram(`💰 <b>ĐÓNG ${position.type}</b>\n• Net: ${net.toFixed(2)} USDT\n• Lý do: ${reason}`);
+      const icon = net > 0 ? '✅' : '❌';
+      sendTelegram(`${icon} <b>ĐÓNG ${position.type}</b>\n• Lãi ròng: ${net.toFixed(2)} USDT\n• Lý do: ${reason}`);
       addLog(`ĐÓNG ${position.type}: ${net.toFixed(2)} USDT`, net > 0 ? 'success' : 'danger');
     } catch (e: any) {
+      isProcessingRef.current = false;
       addLog(`Lỗi đóng lệnh: ${e.message}`, 'danger');
     }
   };
@@ -421,7 +479,7 @@ export default function BitcoinTradingBot() {
 
   return (
     <div className="min-h-screen bg-[#0b0e11] text-gray-100 font-sans p-3 md:p-6 flex flex-col gap-4">
-      {/* SETTINGS MODAL BẢO MẬT & CHỐNG ĐƠ */}
+      {/* SETTINGS MODAL */}
       {showSettings && (
         <div className="fixed inset-0 bg-black/90 z-50 flex items-center justify-center p-4 backdrop-blur-md">
           <div className="bg-[#1e2329] p-6 rounded-3xl border border-gray-700 max-w-md w-full shadow-2xl">
@@ -430,34 +488,19 @@ export default function BitcoinTradingBot() {
                   <input value={tgConfig.token} onChange={e => setTgConfig({...tgConfig, token: e.target.value})} className="w-full bg-[#0b0e11] border border-gray-700 rounded-xl p-3 text-sm text-white focus:border-purple-500 outline-none" placeholder="Bot Token Telegram" disabled={isSavingSettings} />
                   <input value={tgConfig.chatId} onChange={e => setTgConfig({...tgConfig, chatId: e.target.value})} className="w-full bg-[#0b0e11] border border-gray-700 rounded-xl p-3 text-sm text-white focus:border-purple-500 outline-none" placeholder="Chat ID" disabled={isSavingSettings} />
               </div>
-              
-              {settingError && (
-                 <div className="mt-4 bg-red-900/20 border border-red-900/50 p-3 rounded-xl flex items-center gap-2">
-                   <AlertTriangle size={14} className="text-red-400 shrink-0"/>
-                   <p className="text-red-400 text-xs font-bold">{settingError}</p>
-                 </div>
-              )}
-
               <div className="mt-6 flex gap-3">
-                  <button onClick={() => { setShowSettings(false); setSettingError(''); }} className="flex-1 py-3 text-gray-400 font-bold hover:text-white" disabled={isSavingSettings}>HỦY</button>
+                  <button onClick={() => setShowSettings(false)} className="flex-1 py-3 text-gray-400 font-bold hover:text-white" disabled={isSavingSettings}>HỦY</button>
                   <button 
                     disabled={isSavingSettings}
                     onClick={async () => {
                       if (!user) return;
                       setIsSavingSettings(true);
-                      setSettingError('');
                       try {
                           await setDoc(doc(db, 'artifacts', APP_ID, 'users', user.uid, 'account', 'data'), { tgToken: tgConfig.token, tgChatId: tgConfig.chatId }, { merge: true });
                           setShowSettings(false); 
                           addLog("Đã lưu cấu hình Telegram.", "success"); 
-                          sendTelegram("🔗 Bot V3 đã kết nối Telegram thành công!");
-                      } catch (err: any) {
-                          console.error("Lỗi lưu Telegram:", err);
-                          setSettingError("Lỗi Database: " + (err.message || "Bạn chưa cấp quyền Test Mode trong Firebase Firestore."));
-                          addLog("Lỗi khi lưu cấu hình Telegram!", "danger");
-                      } finally {
-                          setIsSavingSettings(false);
-                      }
+                      } catch (err) { } 
+                      finally { setIsSavingSettings(false); }
                   }} className="flex-1 py-3 bg-blue-600 rounded-xl text-white font-black hover:bg-blue-700 disabled:opacity-50 flex justify-center items-center">
                     {isSavingSettings ? <RefreshCw className="animate-spin" size={20}/> : 'LƯU CÀI ĐẶT'}
                   </button>
@@ -499,7 +542,7 @@ export default function BitcoinTradingBot() {
                 <span className="text-[10px] text-gray-500 uppercase font-black tracking-widest block mb-1">Ví USDT (Mây)</span>
                 <p className="text-4xl font-mono font-black text-white tracking-tighter">${Number(account.balance).toLocaleString()}</p>
                 <div className="flex items-center gap-2 mt-4 text-[9px] text-gray-500 font-black uppercase tracking-widest bg-black/30 w-fit px-3 py-1 rounded-full border border-gray-800">
-                   <Activity size={12} className="text-blue-500"/> Heartbeat active
+                   <Activity size={12} className="text-blue-500"/> Cooldown 1 Phút
                 </div>
             </div>
             <div className={`bg-[#1e2329] p-6 rounded-3xl border transition-all duration-700 shadow-xl relative ${position ? 'border-blue-500 ring-4 ring-blue-500/10' : 'border-gray-800 opacity-50'}`}>
