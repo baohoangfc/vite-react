@@ -30,14 +30,14 @@ export default function AuthScreen() {
 
     return (
         <div className="min-h-screen bg-[#05070a] flex items-center justify-center p-4 font-sans text-gray-100">
-            <div className="bg-[#0d1117] p-8 rounded-[2rem] border border-white/5 w-full max-w-md shadow-2xl relative overflow-hidden backdrop-blur-xl">
+            <div className="bg-[#0d1117] p-6 sm:p-8 rounded-[1.5rem] sm:rounded-[2rem] border border-white/5 w-full max-w-md shadow-2xl relative overflow-hidden backdrop-blur-xl">
                 <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500"></div>
                 <div className="flex justify-center mb-6">
-                    <div className="p-4 bg-gradient-to-br from-blue-600 to-purple-600 rounded-2xl shadow-lg shadow-purple-500/20">
-                        <ShieldCheck size={40} />
+                    <div className="p-3 sm:p-4 bg-gradient-to-br from-blue-600 to-purple-600 rounded-2xl shadow-lg shadow-purple-500/20">
+                        <ShieldCheck size={32} />
                     </div>
                 </div>
-                <h2 className="text-2xl font-black text-center mb-2 uppercase tracking-tighter">Cyber-Pro Login</h2>
+                <h2 className="text-xl sm:text-2xl font-black text-center mb-2 uppercase tracking-tighter">Cyber-Pro Login</h2>
                 <form onSubmit={handleAuth} className="space-y-4 mt-6">
                     <input
                         type="email"

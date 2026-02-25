@@ -26,21 +26,21 @@ export default function ActivePosition({
 
             {position ? (
                 <div className="space-y-4 flex-1 flex flex-col justify-between">
-                    <div className="text-center bg-[#05070a] p-4 rounded-xl border border-gray-800 shadow-inner">
+                    <div className="text-center bg-[#05070a] p-3 sm:p-4 rounded-xl border border-gray-800 shadow-inner">
                         <span className="text-[10px] text-gray-500 font-bold uppercase block mb-1">Lợi nhuận Tạm tính (ROE)</span>
-                        <span className={`font-mono font-black text-3xl ${unrealizedPnl >= 0 ? 'text-green-400 drop-shadow-[0_0_5px_rgba(74,222,128,0.4)]' : 'text-red-400 drop-shadow-[0_0_5px_rgba(248,113,113,0.4)]'}`}>
+                        <span className={`font-mono font-black text-2xl sm:text-3xl ${unrealizedPnl >= 0 ? 'text-green-400 drop-shadow-[0_0_5px_rgba(74,222,128,0.4)]' : 'text-red-400 drop-shadow-[0_0_5px_rgba(248,113,113,0.4)]'}`}>
                             {unrealizedPnl > 0 ? '+' : ''}{unrealizedPnl.toFixed(2)} <span className="text-lg">({unrealizedRoe.toFixed(1)}%)</span>
                         </span>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-3 text-xs">
+                    <div className="grid grid-cols-2 gap-2 sm:gap-3 text-xs">
                         <div className="bg-white/5 p-2 rounded-lg border border-white/5 text-center">
                             <span className="block text-[9px] text-gray-500 uppercase font-bold mb-0.5">Vào Lệnh</span>
-                            <span className="text-gray-200 font-mono font-bold">{position.entryPrice.toLocaleString()}</span>
+                            <span className="text-gray-200 font-mono font-bold text-[10px] sm:text-xs">{position.entryPrice.toLocaleString()}</span>
                         </div>
                         <div className="bg-white/5 p-2 rounded-lg border border-white/5 text-center">
                             <span className="block text-[9px] text-gray-500 uppercase font-bold mb-0.5">Ký quỹ</span>
-                            <span className="text-gray-200 font-mono font-bold">${position.margin.toFixed(1)}</span>
+                            <span className="text-gray-200 font-mono font-bold text-[10px] sm:text-xs">${position.margin.toFixed(1)}</span>
                         </div>
                     </div>
 

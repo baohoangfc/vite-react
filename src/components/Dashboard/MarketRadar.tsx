@@ -24,7 +24,7 @@ export default function MarketRadar({ analysis }: MarketRadarProps) {
                     <div className="text-center mt-1 text-xs font-bold text-white">Điểm Đồng thuận: {analysis.score > 0 ? '+' + analysis.score : analysis.score}/5</div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-3 pt-3 border-t border-gray-800/50">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-3 border-t border-gray-800/50">
                     <div className="bg-white/5 p-3 rounded-xl border border-white/5">
                         <span className="text-[10px] text-gray-500 uppercase font-bold block mb-1">Xu Hướng (EMA)</span>
                         <span className={`text-sm font-black flex items-center gap-1 ${analysis.trend === 'UP' ? 'text-green-400' : 'text-red-400'}`}>
@@ -37,13 +37,13 @@ export default function MarketRadar({ analysis }: MarketRadarProps) {
                             {analysis.rsi.toFixed(1)}
                         </span>
                     </div>
-                    <div className="bg-white/5 p-3 rounded-xl border border-white/5">
+                    <div className="bg-white/5 p-3 rounded-xl border border-white/5 text-center sm:text-left">
                         <span className="text-[10px] text-gray-500 uppercase font-bold block mb-1">Dòng tiền SMC</span>
-                        <span className="text-sm font-black text-blue-400 truncate">
+                        <span className="text-sm font-black text-blue-400 truncate block">
                             {analysis.ob ? `${analysis.ob} OB` : analysis.fvg ? `${analysis.fvg} FVG` : 'Chờ Tín Hiệu'}
                         </span>
                     </div>
-                    <div className="bg-white/5 p-3 rounded-xl border border-white/5">
+                    <div className="bg-white/5 p-3 rounded-xl border border-white/5 text-center sm:text-left">
                         <span className="text-[10px] text-gray-500 uppercase font-bold block mb-1">Động lượng MACD</span>
                         <span className={`text-sm font-black ${analysis.macd.hist > 0 ? 'text-green-400' : 'text-red-400'}`}>
                             {analysis.macd.hist > 0 ? 'Phân kỳ Dương' : 'Phân kỳ Âm'}

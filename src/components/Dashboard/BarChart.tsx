@@ -37,7 +37,7 @@ export default function BarChart({ candles, position }: BarChartProps) {
     };
 
     return (
-        <div className="bg-[#0d1117]/80 backdrop-blur-xl p-5 rounded-2xl border border-white/5 h-[300px] relative flex flex-col shadow-xl">
+        <div className="bg-[#0d1117]/80 backdrop-blur-xl p-5 rounded-2xl border border-white/5 h-[250px] sm:h-[300px] relative flex flex-col shadow-xl">
             <div className="flex justify-between mb-2 z-10">
                 <h3 className="text-xs font-black text-gray-400 uppercase tracking-widest flex items-center gap-2"><BarChart2 size={14} className="text-blue-400" /> Phân tích Kỹ thuật M1</h3>
             </div>

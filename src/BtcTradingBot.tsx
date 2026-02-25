@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { onAuthStateChanged, signOut, User } from 'firebase/auth';
 import { doc, setDoc, onSnapshot, collection } from 'firebase/firestore';
 import {
@@ -45,7 +45,6 @@ export default function BitcoinTradingBot() {
   });
 
   const [isRunning, setIsRunning] = useState(false);
-  const [isSimulation] = useState(false);
   const [logs, setLogs] = useState<{ msg: string, type: string }[]>([]);
   const [activeTab, setActiveTab] = useState<'LOGS' | 'HISTORY' | 'DAILY'>('LOGS');
   const [showSettings, setShowSettings] = useState(false);
@@ -389,27 +388,27 @@ export default function BitcoinTradingBot() {
       <div className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         <div className="lg:col-span-12 flex flex-col md:flex-row justify-between items-center bg-[#0d1117]/80 backdrop-blur-xl p-5 rounded-2xl shadow-2xl border border-white/5 relative overflow-hidden">
           <div className="absolute top-0 left-0 w-full h-[2px] bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500 opacity-50"></div>
-          <div className="flex items-center gap-4 z-10">
+          <div className="flex flex-col sm:flex-row items-center gap-4 z-10 w-full sm:w-auto text-center sm:text-left">
             <div className="p-3 bg-gradient-to-br from-blue-600 to-purple-600 rounded-xl text-white shadow-lg shadow-blue-500/30"><Crosshair size={24} /></div>
             <div>
-              <h1 className="text-2xl font-black bg-clip-text text-transparent bg-gradient-to-r from-white to-gray-400 tracking-tight flex items-center gap-3">
+              <h1 className="text-xl sm:text-2xl font-black bg-clip-text text-transparent bg-gradient-to-r from-white to-gray-400 tracking-tight flex flex-col sm:flex-row items-center gap-2 sm:gap-3">
                 NEXUS AI TRADER
                 <SentimentIndicators sentiment={sentiment} />
               </h1>
-              <div className="flex items-center gap-3 text-[11px] text-gray-400 mt-1 font-medium">
-                <span className="flex items-center gap-1"><Layers size={12} /> SMC Confluence Engine</span>
-                <span className="border-l border-gray-700 pl-3 text-blue-400 font-bold tracking-widest">LEV x{CONFIG.LEVERAGE}</span>
-                <button onClick={() => setShowSettings(true)} className="ml-2 hover:text-white transition-colors underline decoration-gray-700 underline-offset-2">Cài đặt Telegram</button>
-                <button onClick={() => signOut(auth)} className="text-red-400 hover:text-red-300 transition-colors ml-2">Đăng xuất</button>
+              <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2 sm:gap-3 text-[10px] sm:text-[11px] text-gray-400 mt-2 sm:mt-1 font-medium">
+                <span className="flex items-center gap-1"><Layers size={12} /> SMC Engine</span>
+                <span className="border-l border-gray-700 pl-2 sm:pl-3 text-blue-400 font-bold tracking-widest uppercase">LEV x{CONFIG.LEVERAGE}</span>
+                <button onClick={() => setShowSettings(true)} className="ml-0 sm:ml-2 hover:text-white transition-colors underline decoration-gray-700 underline-offset-2">Telegram</button>
+                <button onClick={() => signOut(auth)} className="text-red-400 hover:text-red-300 transition-colors ml-0 sm:ml-2">Đăng xuất</button>
               </div>
             </div>
           </div>
-          <div className="flex items-center gap-6 mt-4 md:mt-0 z-10">
-            <div className="text-right">
-              <p className="text-[10px] text-gray-500 font-bold tracking-widest uppercase">BTC/USDT M1</p>
-              <p className={`text-3xl font-mono font-black tracking-tighter ${candles.length > 0 && currentPrice >= candles[candles.length - 1].open ? 'text-[#0ecb81] drop-shadow-[0_0_8px_#0ecb8140]' : 'text-[#f6465d] drop-shadow-[0_0_8px_#f6465d40]'}`}>{currentPrice.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
+          <div className="flex flex-col sm:flex-row items-center gap-4 sm:gap-6 mt-6 md:mt-0 z-10 w-full sm:w-auto pt-4 md:pt-0 border-t md:border-t-0 border-white/5 md:border-none">
+            <div className="text-center sm:text-right">
+              <p className="text-[10px] text-gray-500 font-bold tracking-widest uppercase mb-1">BTC/USDT M1</p>
+              <p className={`text-2xl sm:text-3xl font-mono font-black tracking-tighter ${candles.length > 0 && currentPrice >= candles[candles.length - 1].open ? 'text-[#0ecb81] drop-shadow-[0_0_8px_#0ecb8140]' : 'text-[#f6465d] drop-shadow-[0_0_8px_#f6465d40]'}`}>{currentPrice.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
             </div>
-            <button onClick={() => setIsRunning(!isRunning)} className={`flex items-center justify-center gap-2 w-36 py-3.5 rounded-xl font-black uppercase tracking-widest transition-all shadow-lg active:scale-95 border ${isRunning ? 'bg-red-500/10 text-red-500 border-red-500/30 hover:bg-red-500/20' : 'bg-green-500 text-[#05070a] border-green-400 hover:bg-green-400 shadow-green-500/20'}`}>
+            <button onClick={() => setIsRunning(!isRunning)} className={`flex items-center justify-center gap-2 w-full sm:w-36 py-3.5 rounded-xl font-black uppercase tracking-widest transition-all shadow-lg active:scale-95 border ${isRunning ? 'bg-red-500/10 text-red-500 border-red-500/30 hover:bg-red-500/20' : 'bg-green-500 text-[#05070a] border-green-400 hover:bg-green-400 shadow-green-500/20'}`}>
               {isRunning ? <><Pause size={16} fill="currentColor" /> NGỪNG</> : <><Play size={16} fill="currentColor" /> KHỞI ĐỘNG</>}
             </button>
           </div>
