@@ -178,7 +178,7 @@ function AuthScreen() {
           <input type="email" value={email} onChange={e => setEmail(e.target.value)} required className="w-full bg-[#0b0e11] border border-gray-700 rounded-xl p-4 text-sm focus:border-purple-500 outline-none" placeholder="Địa chỉ Email" />
           <input type="password" value={password} onChange={e => setPassword(e.target.value)} required className="w-full bg-[#0b0e11] border border-gray-700 rounded-xl p-4 text-sm focus:border-purple-500 outline-none" placeholder="Mật khẩu bảo mật" />
           {error && <p className="text-red-400 text-xs text-center font-bold">{error}</p>}
-          <button type="submit" disabled={loading} className="w-full bg-purple-600 hover:bg-purple-700 font-black tracking-widest py-4 rounded-xl flex items-center justify-center gap-2 transition-all active:scale-95 mt-2">
+          <button type="submit" disabled={loading} className="w-full bg-purple-600 hover:bg-purple-700 font-black tracking-widest py-4 rounded-xl flex items-center justify-center gap-2 transition-all active:scale-95 mt-2 disabled:opacity-50">
             {loading ? <RefreshCw className="animate-spin" size={20}/> : (isLogin ? 'ĐĂNG NHẬP' : 'TẠO TÀI KHOẢN')}
           </button>
         </form>
@@ -202,7 +202,10 @@ export default function BitcoinTradingBot() {
   const [candles, setCandles] = useState<any[]>([]);
   const [isRunning, setIsRunning] = useState(false);
   const [activeTab, setActiveTab] = useState<'LOGS' | 'HISTORY'>('LOGS');
+  
   const [showSettings, setShowSettings] = useState(false);
+  const [isSavingSettings, setIsSavingSettings] = useState(false);
+  const [settingError, setSettingError] = useState('');
 
   const [account, setAccount] = useState({ balance: CONFIG.INITIAL_BALANCE, pnlHistory: 0 });
   const [position, setPosition] = useState<any>(null);
@@ -343,11 +346,14 @@ export default function BitcoinTradingBot() {
 
     const details = { type: String(type), entry: Number(currentPrice), margin: Number(margin - fee), size: Number(size), tp: Number(tp), sl: Number(sl), openFee: Number(fee), time: Date.now(), signalDetail: { rsi: String(rsiVal), setup: "MTF Consensus" } };
 
-    await setDoc(doc(db, 'artifacts', APP_ID, 'users', user.uid, 'account', 'data'), { balance: 0 }, { merge: true });
-    await setDoc(doc(db, 'artifacts', APP_ID, 'users', user.uid, 'position', 'active'), { active: true, details });
-
-    sendTelegram(`🚀 <b>MỞ ${type}</b>\n• Giá: ${currentPrice.toLocaleString()}\n• RSI: ${rsiVal}`);
-    addLog(`MỞ ${type} (RSI: ${rsiVal})`, 'success');
+    try {
+      await setDoc(doc(db, 'artifacts', APP_ID, 'users', user.uid, 'account', 'data'), { balance: 0 }, { merge: true });
+      await setDoc(doc(db, 'artifacts', APP_ID, 'users', user.uid, 'position', 'active'), { active: true, details });
+      sendTelegram(`🚀 <b>MỞ ${type}</b>\n• Giá: ${currentPrice.toLocaleString()}\n• RSI: ${rsiVal}`);
+      addLog(`MỞ ${type} (RSI: ${rsiVal})`, 'success');
+    } catch (e: any) {
+      addLog(`Lỗi mở lệnh: ${e.message}`, 'danger');
+    }
   };
 
   const handleCloseOrder = async (reason: string, pnl: number) => {
@@ -356,12 +362,16 @@ export default function BitcoinTradingBot() {
     const net = Number(pnl) - fee - Number(position.openFee);
     const tradeId = Date.now().toString();
 
-    await setDoc(doc(db, 'artifacts', APP_ID, 'users', user.uid, 'history', tradeId), { id: tradeId, type: String(position.type), entry: Number(position.entry), exit: Number(currentPrice), pnl: net, reason: String(reason), time: Date.now(), signalDetail: position.signalDetail || null });
-    await setDoc(doc(db, 'artifacts', APP_ID, 'users', user.uid, 'account', 'data'), { balance: account.balance + Number(position.margin) + (Number(pnl) - fee), pnlHistory: account.pnlHistory + net }, { merge: true });
-    await setDoc(doc(db, 'artifacts', APP_ID, 'users', user.uid, 'position', 'active'), { active: false });
+    try {
+      await setDoc(doc(db, 'artifacts', APP_ID, 'users', user.uid, 'history', tradeId), { id: tradeId, type: String(position.type), entry: Number(position.entry), exit: Number(currentPrice), pnl: net, reason: String(reason), time: Date.now(), signalDetail: position.signalDetail || null });
+      await setDoc(doc(db, 'artifacts', APP_ID, 'users', user.uid, 'account', 'data'), { balance: account.balance + Number(position.margin) + (Number(pnl) - fee), pnlHistory: account.pnlHistory + net }, { merge: true });
+      await setDoc(doc(db, 'artifacts', APP_ID, 'users', user.uid, 'position', 'active'), { active: false });
 
-    sendTelegram(`💰 <b>ĐÓNG ${position.type}</b>\n• Net: ${net.toFixed(2)} USDT\n• Lý do: ${reason}`);
-    addLog(`ĐÓNG ${position.type}: ${net.toFixed(2)} USDT`, net > 0 ? 'success' : 'danger');
+      sendTelegram(`💰 <b>ĐÓNG ${position.type}</b>\n• Net: ${net.toFixed(2)} USDT\n• Lý do: ${reason}`);
+      addLog(`ĐÓNG ${position.type}: ${net.toFixed(2)} USDT`, net > 0 ? 'success' : 'danger');
+    } catch (e: any) {
+      addLog(`Lỗi đóng lệnh: ${e.message}`, 'danger');
+    }
   };
 
   const addLog = (msg: string, type: string) => {
@@ -411,28 +421,46 @@ export default function BitcoinTradingBot() {
 
   return (
     <div className="min-h-screen bg-[#0b0e11] text-gray-100 font-sans p-3 md:p-6 flex flex-col gap-4">
-      {/* SETTINGS MODAL */}
+      {/* SETTINGS MODAL BẢO MẬT & CHỐNG ĐƠ */}
       {showSettings && (
         <div className="fixed inset-0 bg-black/90 z-50 flex items-center justify-center p-4 backdrop-blur-md">
           <div className="bg-[#1e2329] p-6 rounded-3xl border border-gray-700 max-w-md w-full shadow-2xl">
               <h2 className="text-xl font-black mb-4 flex items-center gap-2 uppercase tracking-tighter"><Settings className="text-purple-500"/> Cấu hình Cloud</h2>
               <div className="space-y-4">
-                  <input value={tgConfig.token} onChange={e => setTgConfig({...tgConfig, token: e.target.value})} className="w-full bg-[#0b0e11] border border-gray-700 rounded-xl p-3 text-sm text-white focus:border-purple-500 outline-none" placeholder="Bot Token Telegram" />
-                  <input value={tgConfig.chatId} onChange={e => setTgConfig({...tgConfig, chatId: e.target.value})} className="w-full bg-[#0b0e11] border border-gray-700 rounded-xl p-3 text-sm text-white focus:border-purple-500 outline-none" placeholder="Chat ID" />
+                  <input value={tgConfig.token} onChange={e => setTgConfig({...tgConfig, token: e.target.value})} className="w-full bg-[#0b0e11] border border-gray-700 rounded-xl p-3 text-sm text-white focus:border-purple-500 outline-none" placeholder="Bot Token Telegram" disabled={isSavingSettings} />
+                  <input value={tgConfig.chatId} onChange={e => setTgConfig({...tgConfig, chatId: e.target.value})} className="w-full bg-[#0b0e11] border border-gray-700 rounded-xl p-3 text-sm text-white focus:border-purple-500 outline-none" placeholder="Chat ID" disabled={isSavingSettings} />
               </div>
+              
+              {settingError && (
+                 <div className="mt-4 bg-red-900/20 border border-red-900/50 p-3 rounded-xl flex items-center gap-2">
+                   <AlertTriangle size={14} className="text-red-400 shrink-0"/>
+                   <p className="text-red-400 text-xs font-bold">{settingError}</p>
+                 </div>
+              )}
+
               <div className="mt-6 flex gap-3">
-                  <button onClick={() => setShowSettings(false)} className="flex-1 py-3 text-gray-400 font-bold hover:text-white">HỦY</button>
-                  <button onClick={async () => {
+                  <button onClick={() => { setShowSettings(false); setSettingError(''); }} className="flex-1 py-3 text-gray-400 font-bold hover:text-white" disabled={isSavingSettings}>HỦY</button>
+                  <button 
+                    disabled={isSavingSettings}
+                    onClick={async () => {
+                      if (!user) return;
+                      setIsSavingSettings(true);
+                      setSettingError('');
                       try {
                           await setDoc(doc(db, 'artifacts', APP_ID, 'users', user.uid, 'account', 'data'), { tgToken: tgConfig.token, tgChatId: tgConfig.chatId }, { merge: true });
                           setShowSettings(false); 
                           addLog("Đã lưu cấu hình Telegram.", "success"); 
                           sendTelegram("🔗 Bot V3 đã kết nối Telegram thành công!");
-                      } catch (err) {
+                      } catch (err: any) {
                           console.error("Lỗi lưu Telegram:", err);
+                          setSettingError("Lỗi Database: " + (err.message || "Bạn chưa cấp quyền Test Mode trong Firebase Firestore."));
                           addLog("Lỗi khi lưu cấu hình Telegram!", "danger");
+                      } finally {
+                          setIsSavingSettings(false);
                       }
-                  }} className="flex-1 py-3 bg-blue-600 rounded-xl text-white font-black hover:bg-blue-700">LƯU CÀI ĐẶT</button>
+                  }} className="flex-1 py-3 bg-blue-600 rounded-xl text-white font-black hover:bg-blue-700 disabled:opacity-50 flex justify-center items-center">
+                    {isSavingSettings ? <RefreshCw className="animate-spin" size={20}/> : 'LƯU CÀI ĐẶT'}
+                  </button>
               </div>
           </div>
         </div>
