@@ -31,22 +31,30 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-// Làm sạch appId để tránh lỗi segment Firestore (Rule 1)
-// @ts-ignore
-const rawAppId = typeof __app_id !== 'undefined' ? __app_id : 'trading-bot-v3-final';
-const appId = rawAppId.replace(/\//g, '_');
+// LÀM SẠCH TUYỆT ĐỐI APP ID (Fix lỗi Invalid document reference)
+const getSafeAppId = () => {
+  try {
+    // @ts-ignore
+    if (typeof __app_id !== 'undefined' && __app_id) {
+      // @ts-ignore
+      return String(__app_id).replace(/[^a-zA-Z0-9]/g, '_');
+    }
+  } catch(e) {}
+  return 'trading-bot-v3-safe';
+};
+const appId = getSafeAppId();
 
 // --- CẤU HÌNH HỆ THỐNG ---
 const CONFIG = {
   SYMBOL: 'BTCUSDT',
   INTERVAL: '1m',       
-  LIMIT_CANDLES: 60, // Hiển thị 60 nến gần nhất
+  LIMIT_CANDLES: 60, 
   TP_PERCENT: 0.008, 
   SL_PERCENT: 0.004, 
   LEVERAGE: 50,
   INITIAL_BALANCE: 10000,
   FEE: 0.0004, 
-  HEARTBEAT_MS: 10 * 60 * 1000, // 10 phút gửi thông báo 1 lần
+  HEARTBEAT_MS: 10 * 60 * 1000, 
 };
 
 // --- GIAO DIỆN ĐĂNG NHẬP ---
@@ -70,7 +78,7 @@ function AuthScreen() {
         await setDoc(userDoc, { balance: CONFIG.INITIAL_BALANCE, pnlHistory: 0, createdAt: Date.now() });
       }
     } catch (err: any) {
-      setError('Lỗi: Email/Mật khẩu không chính xác hoặc đã tồn tại.');
+      setError(String(err?.message || 'Lỗi: Email/Mật khẩu không chính xác hoặc đã tồn tại.'));
     } finally { setLoading(false); }
   };
 
@@ -119,7 +127,7 @@ export default function BitcoinTradingBot() {
   const rsiCache = useRef<number>(50);
   const logsEndRef = useRef<HTMLDivElement>(null);
 
-  // 1. QUẢN LÝ XÁC THỰC (Rule 3)
+  // 1. QUẢN LÝ XÁC THỰC
   useEffect(() => {
     const initAuth = async () => {
         // @ts-ignore
@@ -133,7 +141,7 @@ export default function BitcoinTradingBot() {
     return () => unsub();
   }, []);
 
-  // 2. ĐỒNG BỘ CLOUD (Rule 1 & 2)
+  // 2. ĐỒNG BỘ CLOUD AN TOÀN
   useEffect(() => {
     if (!user) return;
     const userRef = doc(db, 'artifacts', appId, 'users', user.uid, 'account', 'data');
@@ -143,21 +151,27 @@ export default function BitcoinTradingBot() {
     const unsubAcc = onSnapshot(userRef, (d) => {
       if (d.exists()) {
         const data = d.data();
-        setAccount({ balance: Number(data.balance), pnlHistory: Number(data.pnlHistory) });
-        setTgConfig({ token: data.tgToken || '', chatId: data.tgChatId || '' });
+        setAccount({ balance: Number(data.balance) || 0, pnlHistory: Number(data.pnlHistory) || 0 });
+        setTgConfig({ token: String(data.tgToken || ''), chatId: String(data.tgChatId || '') });
       } else { setDoc(userRef, { balance: CONFIG.INITIAL_BALANCE, pnlHistory: 0 }); }
-    });
+    }, (err) => console.error(err));
 
     const unsubPos = onSnapshot(posRef, (d) => {
-      if (d.exists() && d.data().active) setPosition(d.data().details);
-      else setPosition(null);
-    });
+      if (d.exists() && d.data().active && d.data().details) {
+        setPosition(d.data().details);
+      } else {
+        setPosition(null);
+      }
+    }, (err) => console.error(err));
 
     const unsubHist = onSnapshot(histCol, (s) => {
       const list: any[] = [];
-      s.forEach(docSnap => list.push(docSnap.data()));
-      setHistory(list.sort((a, b) => b.time - a.time));
-    });
+      s.forEach(docSnap => {
+          const data = docSnap.data();
+          if (data && typeof data === 'object') list.push(data);
+      });
+      setHistory(list.sort((a, b) => (Number(b.time) || 0) - (Number(a.time) || 0)));
+    }, (err) => console.error(err));
 
     return () => { unsubAcc(); unsubPos(); unsubHist(); };
   }, [user]);
@@ -170,7 +184,7 @@ export default function BitcoinTradingBot() {
             const res = await fetch(`https://api.binance.com/api/v3/klines?symbol=${CONFIG.SYMBOL}&interval=${CONFIG.INTERVAL}&limit=${CONFIG.LIMIT_CANDLES}`);
             const data = await res.json();
             const formatted = data.map((k: any) => ({
-                time: k[0],
+                time: Number(k[0]),
                 open: parseFloat(k[1]),
                 high: parseFloat(k[2]),
                 low: parseFloat(k[3]),
@@ -185,29 +199,33 @@ export default function BitcoinTradingBot() {
     loadHistory().then(() => {
         ws = new WebSocket(`wss://stream.binance.com:9443/ws/${CONFIG.SYMBOL.toLowerCase()}@kline_1m`);
         ws.onmessage = (e) => {
-            const data = JSON.parse(e.data).k;
-            const price = parseFloat(data.c);
-            setCurrentPrice(price);
-            
-            setCandles(prev => {
-                const lastIdx = prev.length - 1;
-                const candle = { 
-                    time: data.t, 
-                    open: parseFloat(data.o), 
-                    high: parseFloat(data.h), 
-                    low: parseFloat(data.l), 
-                    close: price, 
-                    isGreen: price >= parseFloat(data.o) 
-                };
+            try {
+                const parsed = JSON.parse(e.data);
+                if (!parsed || !parsed.k) return;
+                const data = parsed.k;
+                const price = parseFloat(data.c);
+                setCurrentPrice(price);
                 
-                if (prev.length > 0 && prev[lastIdx].time === data.t) {
-                    const newArr = [...prev];
-                    newArr[lastIdx] = candle;
-                    return newArr;
-                } else {
-                    return [...prev.slice(-(CONFIG.LIMIT_CANDLES - 1)), candle];
-                }
-            });
+                setCandles(prev => {
+                    const lastIdx = prev.length - 1;
+                    const candle = { 
+                        time: Number(data.t), 
+                        open: parseFloat(data.o), 
+                        high: parseFloat(data.h), 
+                        low: parseFloat(data.l), 
+                        close: price, 
+                        isGreen: price >= parseFloat(data.o) 
+                    };
+                    
+                    if (prev.length > 0 && prev[lastIdx].time === Number(data.t)) {
+                        const newArr = [...prev];
+                        newArr[lastIdx] = candle;
+                        return newArr;
+                    } else {
+                        return [...prev.slice(-(CONFIG.LIMIT_CANDLES - 1)), candle];
+                    }
+                });
+            } catch (err) { console.error(err); }
         };
     });
 
@@ -223,7 +241,7 @@ export default function BitcoinTradingBot() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ chat_id: tgConfig.chatId, text, parse_mode: 'HTML' })
       });
-    } catch (e) { console.error("TG Send Error"); }
+    } catch (e) {}
   };
 
   useEffect(() => {
@@ -241,14 +259,18 @@ export default function BitcoinTradingBot() {
     if (!isRunning || !user || currentPrice === 0) return;
 
     if (position) {
-      const isL = position.type === 'LONG';
-      const pnl = isL ? (currentPrice - position.entry) * (position.size / position.entry) : (position.entry - currentPrice) * (position.size / position.entry);
+      const isL = String(position.type) === 'LONG';
+      const entry = Number(position.entry);
+      const size = Number(position.size);
+      const tp = Number(position.tp);
+      const sl = Number(position.sl);
+
+      const pnl = isL ? (currentPrice - entry) * (size / entry) : (entry - currentPrice) * (size / entry);
       let r = '';
-      if ((isL && currentPrice >= position.tp) || (!isL && currentPrice <= position.tp)) r = 'TAKE PROFIT';
-      if ((isL && currentPrice <= position.sl) || (!isL && currentPrice >= position.sl)) r = 'STOP LOSS';
+      if ((isL && currentPrice >= tp) || (!isL && currentPrice <= tp)) r = 'TAKE PROFIT';
+      if ((isL && currentPrice <= sl) || (!isL && currentPrice >= sl)) r = 'STOP LOSS';
       if (r) handleCloseOrder(r, pnl);
     } else {
-        // Tín hiệu giả lập (RSI)
         const rsi = 30 + Math.random() * 40;
         if (rsi < 35 || rsi > 65) {
             handleOpenOrder(rsi < 35 ? 'LONG' : 'SHORT', rsi.toFixed(1));
@@ -265,7 +287,17 @@ export default function BitcoinTradingBot() {
     const tp = type === 'LONG' ? currentPrice * (1 + CONFIG.TP_PERCENT) : currentPrice * (1 - CONFIG.TP_PERCENT);
     const sl = type === 'LONG' ? currentPrice * (1 - CONFIG.SL_PERCENT) : currentPrice * (1 + CONFIG.SL_PERCENT);
 
-    const details = { type, entry: currentPrice, margin: margin - fee, size, tp, sl, openFee: fee, time: Date.now(), signalDetail: { rsi: rsiVal, setup: "MTF Consensus" } };
+    const details = { 
+        type: String(type), 
+        entry: Number(currentPrice), 
+        margin: Number(margin - fee), 
+        size: Number(size), 
+        tp: Number(tp), 
+        sl: Number(sl), 
+        openFee: Number(fee), 
+        time: Date.now(), 
+        signalDetail: { rsi: String(rsiVal), setup: "MTF Consensus" } 
+    };
 
     await updateDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'account', 'data'), { balance: 0 });
     await setDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'position', 'active'), { active: true, details });
@@ -276,16 +308,25 @@ export default function BitcoinTradingBot() {
 
   const handleCloseOrder = async (reason: string, pnl: number) => {
     if (!user || !position) return;
-    const fee = position.size * CONFIG.FEE;
-    const net = pnl - fee - position.openFee;
+    const fee = Number(position.size) * CONFIG.FEE;
+    const net = Number(pnl) - fee - Number(position.openFee);
     const tradeId = Date.now().toString();
 
     await setDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'history', tradeId), { 
-      id: tradeId, type: position.type, entry: position.entry, exit: currentPrice, pnl: net, 
-      reason, time: Date.now(), signalDetail: position.signalDetail 
+      id: tradeId, 
+      type: String(position.type), 
+      entry: Number(position.entry), 
+      exit: Number(currentPrice), 
+      pnl: net, 
+      reason: String(reason), 
+      time: Date.now(), 
+      signalDetail: position.signalDetail || null 
     });
 
-    await updateDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'account', 'data'), { balance: account.balance + position.margin + (pnl - fee), pnlHistory: account.pnlHistory + net });
+    await updateDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'account', 'data'), { 
+        balance: account.balance + Number(position.margin) + (Number(pnl) - fee), 
+        pnlHistory: account.pnlHistory + net 
+    });
     await setDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'position', 'active'), { active: false });
 
     sendTelegram(`💰 <b>ĐÓNG ${position.type}</b>\n• Lãi ròng: ${net.toFixed(2)} USDT\n• Lý do: ${reason}`);
@@ -294,7 +335,7 @@ export default function BitcoinTradingBot() {
 
   const addLog = (msg: string, type: string) => {
     const time = new Date().toLocaleTimeString();
-    setLogs(prev => [{ msg: String(msg), type: String(type), time }, ...prev.slice(0, 49)]);
+    setLogs(prev => [{ msg: String(msg), type: String(type), time: String(time) }, ...prev.slice(0, 49)]);
   };
 
   useEffect(() => { logsEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [logs, activeTab]);
@@ -304,29 +345,28 @@ export default function BitcoinTradingBot() {
 
   // HÀM VẼ NẾN CHUẨN
   const renderCandles = () => {
-    if (candles.length === 0) return null;
-    const maxP = Math.max(...candles.map(c => c.high));
-    const minP = Math.min(...candles.map(c => c.low));
+    if (!candles || candles.length === 0) return null;
+    const maxP = Math.max(...candles.map(c => Number(c.high) || 0));
+    const minP = Math.min(...candles.map(c => Number(c.low) || 0));
     const range = maxP - minP || 1;
 
     return (
       <div className="flex items-end justify-between h-full w-full px-1 relative">
         {candles.map((c, i) => {
-          const bodyHeight = (Math.abs(c.open - c.close) / range) * 100;
-          const bodyBottom = ((Math.min(c.open, c.close) - minP) / range) * 100;
-          const wickHeight = ((c.high - c.low) / range) * 100;
-          const wickBottom = ((c.low - minP) / range) * 100;
+          const bodyHeight = (Math.abs(Number(c.open) - Number(c.close)) / range) * 100;
+          const bodyBottom = ((Math.min(Number(c.open), Number(c.close)) - minP) / range) * 100;
+          const wickHeight = ((Number(c.high) - Number(c.low)) / range) * 100;
+          const wickBottom = ((Number(c.low) - minP) / range) * 100;
+          const isGreen = Boolean(c.isGreen);
           
           return (
             <div key={i} className="flex-1 h-full relative mx-[1px] group">
-              {/* Bấc nến */}
               <div 
-                className={`absolute left-1/2 -translate-x-1/2 w-[1px] ${c.isGreen ? 'bg-green-500/50' : 'bg-red-500/50'}`}
+                className={`absolute left-1/2 -translate-x-1/2 w-[1px] ${isGreen ? 'bg-green-500/50' : 'bg-red-500/50'}`}
                 style={{ height: `${wickHeight}%`, bottom: `${wickBottom}%` }}
               />
-              {/* Thân nến */}
               <div 
-                className={`absolute left-0 w-full rounded-sm ${c.isGreen ? 'bg-green-500' : 'bg-red-500'}`}
+                className={`absolute left-0 w-full rounded-sm ${isGreen ? 'bg-green-500' : 'bg-red-500'}`}
                 style={{ height: `${Math.max(bodyHeight, 2)}%`, bottom: `${bodyBottom}%` }}
               />
             </div>
@@ -337,8 +377,12 @@ export default function BitcoinTradingBot() {
   };
 
   const { pnl: uPnl, roe: uRoe } = position ? (() => {
-      const p = position.type === 'LONG' ? (currentPrice - position.entry) * (position.size / position.entry) : (position.entry - currentPrice) * (position.size / position.entry);
-      return { pnl: p, roe: (p / position.margin) * 100 };
+      const pType = String(position.type);
+      const pEntry = Number(position.entry) || 1;
+      const pSize = Number(position.size) || 0;
+      const pMargin = Number(position.margin) || 1;
+      const p = pType === 'LONG' ? (currentPrice - pEntry) * (pSize / pEntry) : (pEntry - currentPrice) * (pSize / pEntry);
+      return { pnl: p, roe: (p / pMargin) * 100 };
   })() : { pnl: 0, roe: 0 };
 
   return (
@@ -379,7 +423,7 @@ export default function BitcoinTradingBot() {
         <div className="flex items-center gap-6">
           <div className="text-right hidden sm:block">
             <p className="text-[9px] text-gray-500 font-black uppercase">Live Price</p>
-            <p className="text-xl font-mono font-black text-green-400 leading-none">${currentPrice.toLocaleString()}</p>
+            <p className="text-xl font-mono font-black text-green-400 leading-none">${Number(currentPrice).toLocaleString()}</p>
           </div>
           <button onClick={() => setIsRunning(!isRunning)} className={`px-10 py-3 rounded-2xl font-black transition-all shadow-xl active:scale-95 uppercase ${isRunning ? 'bg-red-500 text-white' : 'bg-green-500 text-black'}`}>
             {isRunning ? 'Dừng Bot' : 'Chạy Bot'}
@@ -393,7 +437,7 @@ export default function BitcoinTradingBot() {
             <div className="bg-[#1e2329] p-6 rounded-3xl border border-gray-800 shadow-xl relative group overflow-hidden">
                 <div className="absolute -bottom-4 -right-4 opacity-5"><Wallet size={120}/></div>
                 <span className="text-[10px] text-gray-500 uppercase font-black tracking-widest block mb-1">Ví USDT (Mây)</span>
-                <p className="text-4xl font-mono font-black text-white tracking-tighter">${account.balance.toLocaleString()}</p>
+                <p className="text-4xl font-mono font-black text-white tracking-tighter">${Number(account.balance).toLocaleString()}</p>
                 <div className="flex items-center gap-2 mt-4 text-[9px] text-gray-500 font-black uppercase tracking-widest bg-black/30 w-fit px-3 py-1 rounded-full border border-gray-800">
                    <Activity size={12} className="text-blue-500"/> Heartbeat active
                 </div>
@@ -403,12 +447,12 @@ export default function BitcoinTradingBot() {
                 {position ? (
                   <div className="mt-2">
                     <div className="flex justify-between items-end">
-                      <p className={`text-3xl font-black ${position.type === 'LONG' ? 'text-green-400' : 'text-red-400'}`}>{position.type} x50</p>
-                      <p className={`text-sm font-bold ${uPnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>{uPnl > 0 ? '+' : ''}{uPnl.toFixed(2)} ({uRoe.toFixed(1)}%)</p>
+                      <p className={`text-3xl font-black ${String(position.type) === 'LONG' ? 'text-green-400' : 'text-red-400'}`}>{String(position.type)} x50</p>
+                      <p className={`text-sm font-bold ${Number(uPnl) >= 0 ? 'text-green-400' : 'text-red-400'}`}>{Number(uPnl) > 0 ? '+' : ''}{Number(uPnl).toFixed(2)} ({Number(uRoe).toFixed(1)}%)</p>
                     </div>
                     <div className="mt-4 pt-4 border-t border-gray-800 flex justify-between text-[10px] text-gray-500 font-bold uppercase">
-                       <span>Entry: ${position.entry.toLocaleString()}</span>
-                       <span>TP: ${position.tp.toLocaleString()}</span>
+                       <span>Entry: ${Number(position.entry).toLocaleString()}</span>
+                       <span>TP: ${Number(position.tp).toLocaleString()}</span>
                     </div>
                   </div>
                 ) : <p className="text-3xl font-black text-gray-700 mt-2 uppercase">Chờ tín hiệu...</p>}
@@ -446,9 +490,9 @@ export default function BitcoinTradingBot() {
                     <div className="space-y-3">
                         {logs.length === 0 && <p className="text-gray-700 text-center italic mt-10 uppercase tracking-widest">Bot is scanning...</p>}
                         {logs.map((log, i) => (
-                          <div key={i} className={`border-l-2 pl-3 py-2 leading-relaxed rounded-r-lg bg-gray-900/20 ${log.type === 'success' ? 'border-green-500 text-green-300' : log.type === 'danger' ? 'border-red-500 text-red-300' : 'border-gray-700 text-gray-500'}`}>
-                            <span className="text-[8px] text-gray-600 font-bold block mb-0.5">{log.time}</span>
-                            {log.msg}
+                          <div key={i} className={`border-l-2 pl-3 py-2 leading-relaxed rounded-r-lg bg-gray-900/20 ${String(log.type) === 'success' ? 'border-green-500 text-green-300' : String(log.type) === 'danger' ? 'border-red-500 text-red-300' : 'border-gray-700 text-gray-500'}`}>
+                            <span className="text-[8px] text-gray-600 font-bold block mb-0.5">{String(log.time)}</span>
+                            {String(log.msg)}
                           </div>
                         ))}
                         <div ref={logsEndRef}/>
@@ -456,26 +500,37 @@ export default function BitcoinTradingBot() {
                 ) : (
                     <div className="space-y-4">
                         {history.length === 0 && <p className="text-gray-700 text-center italic mt-10 uppercase tracking-widest opacity-30">No cloud history</p>}
-                        {history.map((t, i) => (
-                            <div key={i} className="bg-[#1e2329]/50 p-4 rounded-3xl border border-gray-800 shadow-lg border-l-4 border-l-purple-500 group transition-all hover:bg-[#1e2329]">
-                                <div className="flex justify-between items-start">
-                                  <div>
-                                    <p className={`font-black text-sm uppercase tracking-tighter ${t.pnl > 0 ? 'text-green-400' : 'text-red-400'}`}>{t.type} {t.pnl > 0 ? '+' : ''}{Number(t.pnl).toFixed(2)} USDT</p>
-                                    <p className="text-[8px] text-gray-600 mt-1 font-black uppercase tracking-widest">{new Date(t.time).toLocaleString()}</p>
+                        {history.map((t, i) => {
+                            const tType = String(t.type || '');
+                            const tPnl = Number(t.pnl || 0);
+                            const tEntry = Number(t.entry || 0);
+                            const tExit = Number(t.exit || 0);
+                            const tReason = String(t.reason || '');
+                            const tTime = new Date(Number(t.time) || Date.now()).toLocaleString();
+                            const rsi = t.signalDetail ? String(t.signalDetail.rsi || '') : '';
+                            const setup = t.signalDetail ? String(t.signalDetail.setup || '') : '';
+
+                            return (
+                              <div key={i} className="bg-[#1e2329]/50 p-4 rounded-3xl border border-gray-800 shadow-lg border-l-4 border-l-purple-500 group transition-all hover:bg-[#1e2329]">
+                                  <div className="flex justify-between items-start">
+                                    <div>
+                                      <p className={`font-black text-sm uppercase tracking-tighter ${tPnl > 0 ? 'text-green-400' : 'text-red-400'}`}>{tType} {tPnl > 0 ? '+' : ''}{tPnl.toFixed(2)} USDT</p>
+                                      <p className="text-[8px] text-gray-600 mt-1 font-black uppercase tracking-widest">{tTime}</p>
+                                    </div>
+                                    <div className="text-right">
+                                       <p className="text-[9px] text-gray-500 font-black italic uppercase">{tReason}</p>
+                                       <p className="text-[8px] text-gray-700 mt-1 font-bold">E: {tEntry} | X: {tExit}</p>
+                                    </div>
                                   </div>
-                                  <div className="text-right">
-                                     <p className="text-[9px] text-gray-500 font-black italic uppercase">{t.reason}</p>
-                                     <p className="text-[8px] text-gray-700 mt-1 font-bold">E: {t.entry} | X: {t.exit}</p>
-                                  </div>
-                                </div>
-                                {t.signalDetail && (
-                                  <div className="mt-3 pt-3 border-t border-gray-800 grid grid-cols-2 gap-1 text-[8px] uppercase font-black text-gray-600">
-                                     <div className="flex items-center gap-1"><Zap size={10} className="text-yellow-500"/> RSI: {t.signalDetail.rsi}</div>
-                                     <div className="text-right truncate">Signal: {t.signalDetail.setup}</div>
-                                  </div>
-                                )}
-                            </div>
-                        ))}
+                                  {t.signalDetail && (
+                                    <div className="mt-3 pt-3 border-t border-gray-800 grid grid-cols-2 gap-1 text-[8px] uppercase font-black text-gray-600">
+                                       <div className="flex items-center gap-1"><Zap size={10} className="text-yellow-500"/> RSI: {rsi}</div>
+                                       <div className="text-right truncate">Signal: {setup}</div>
+                                    </div>
+                                  )}
+                              </div>
+                            );
+                        })}
                     </div>
                 )}
              </div>
