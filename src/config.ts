@@ -37,3 +37,12 @@ export const getSafeAppId = () => {
 };
 
 export const APP_ID = getSafeAppId();
+
+export const DEFAULT_FIREBASE_CONFIG = {
+    apiKey: "AIzaSyA2qyyzovcbtdEZk_SIvOpvLvIkwaIFhYY",
+    authDomain: "telebot-557dc.firebaseapp.com",
+    projectId: "telebot-557dc",
+    storageBucket: "telebot-557dc.firebasestorage.app",
+    messagingSenderId: "325760523176",
+    appId: "1:325760523176:web:3854a7f29bd17f173ddb9d"
+};
