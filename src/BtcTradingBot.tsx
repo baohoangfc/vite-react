@@ -51,8 +51,20 @@ if (typeof window !== 'undefined') {
   }
 }
 
-// Đường dẫn an toàn tuyệt đối tránh lỗi Firestore 7 segments
-const APP_ID = 'trading-bot-v3';
+const getSafeAppId = () => {
+  try {
+    // @ts-ignore
+    if (typeof __app_id !== 'undefined' && __app_id) {
+      // @ts-ignore
+      return String(__app_id).replace(/[^a-zA-Z0-9]/g, '_');
+    }
+  } catch(e) {}
+  return 'trading-bot-v3-safe-vercel';
+};
+const appId = getSafeAppId();
+
+// Đồng bộ đường dẫn an toàn tuyệt đối cho toàn bộ ứng dụng
+const APP_ID = appId;
 
 // ============================================================================
 // 2. CẤU HÌNH BOT
@@ -203,6 +215,14 @@ export default function BitcoinTradingBot() {
 
   // 1. Quản lý Auth
   useEffect(() => {
+    const initAuth = async () => {
+        // @ts-ignore
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+            // @ts-ignore
+            try { await signInWithCustomToken(auth, __initial_auth_token); } catch { await signInAnonymously(auth); }
+        }
+    };
+    initAuth();
     const unsub = onAuthStateChanged(auth, (u) => { setUser(u); setLoadingAuth(false); });
     return () => unsub();
   }, []);
@@ -323,7 +343,7 @@ export default function BitcoinTradingBot() {
 
     const details = { type: String(type), entry: Number(currentPrice), margin: Number(margin - fee), size: Number(size), tp: Number(tp), sl: Number(sl), openFee: Number(fee), time: Date.now(), signalDetail: { rsi: String(rsiVal), setup: "MTF Consensus" } };
 
-    await updateDoc(doc(db, 'artifacts', APP_ID, 'users', user.uid, 'account', 'data'), { balance: 0 });
+    await setDoc(doc(db, 'artifacts', APP_ID, 'users', user.uid, 'account', 'data'), { balance: 0 }, { merge: true });
     await setDoc(doc(db, 'artifacts', APP_ID, 'users', user.uid, 'position', 'active'), { active: true, details });
 
     sendTelegram(`🚀 <b>MỞ ${type}</b>\n• Giá: ${currentPrice.toLocaleString()}\n• RSI: ${rsiVal}`);
@@ -337,7 +357,7 @@ export default function BitcoinTradingBot() {
     const tradeId = Date.now().toString();
 
     await setDoc(doc(db, 'artifacts', APP_ID, 'users', user.uid, 'history', tradeId), { id: tradeId, type: String(position.type), entry: Number(position.entry), exit: Number(currentPrice), pnl: net, reason: String(reason), time: Date.now(), signalDetail: position.signalDetail || null });
-    await updateDoc(doc(db, 'artifacts', APP_ID, 'users', user.uid, 'account', 'data'), { balance: account.balance + Number(position.margin) + (Number(pnl) - fee), pnlHistory: account.pnlHistory + net });
+    await setDoc(doc(db, 'artifacts', APP_ID, 'users', user.uid, 'account', 'data'), { balance: account.balance + Number(position.margin) + (Number(pnl) - fee), pnlHistory: account.pnlHistory + net }, { merge: true });
     await setDoc(doc(db, 'artifacts', APP_ID, 'users', user.uid, 'position', 'active'), { active: false });
 
     sendTelegram(`💰 <b>ĐÓNG ${position.type}</b>\n• Net: ${net.toFixed(2)} USDT\n• Lý do: ${reason}`);
@@ -391,6 +411,7 @@ export default function BitcoinTradingBot() {
 
   return (
     <div className="min-h-screen bg-[#0b0e11] text-gray-100 font-sans p-3 md:p-6 flex flex-col gap-4">
+      {/* SETTINGS MODAL */}
       {showSettings && (
         <div className="fixed inset-0 bg-black/90 z-50 flex items-center justify-center p-4 backdrop-blur-md">
           <div className="bg-[#1e2329] p-6 rounded-3xl border border-gray-700 max-w-md w-full shadow-2xl">
@@ -400,16 +421,24 @@ export default function BitcoinTradingBot() {
                   <input value={tgConfig.chatId} onChange={e => setTgConfig({...tgConfig, chatId: e.target.value})} className="w-full bg-[#0b0e11] border border-gray-700 rounded-xl p-3 text-sm text-white focus:border-purple-500 outline-none" placeholder="Chat ID" />
               </div>
               <div className="mt-6 flex gap-3">
-                  <button onClick={() => setShowSettings(false)} className="flex-1 py-3 text-gray-400 font-bold">HỦY</button>
+                  <button onClick={() => setShowSettings(false)} className="flex-1 py-3 text-gray-400 font-bold hover:text-white">HỦY</button>
                   <button onClick={async () => {
-                      await updateDoc(doc(db, 'artifacts', APP_ID, 'users', user.uid, 'account', 'data'), { tgToken: tgConfig.token, tgChatId: tgConfig.chatId });
-                      setShowSettings(false); addLog("Đã lưu cấu hình.", "success"); sendTelegram("🔗 Bot V3 connected!");
-                  }} className="flex-1 py-3 bg-purple-600 rounded-xl text-white font-black hover:bg-purple-700">LƯU LẠI</button>
+                      try {
+                          await setDoc(doc(db, 'artifacts', APP_ID, 'users', user.uid, 'account', 'data'), { tgToken: tgConfig.token, tgChatId: tgConfig.chatId }, { merge: true });
+                          setShowSettings(false); 
+                          addLog("Đã lưu cấu hình Telegram.", "success"); 
+                          sendTelegram("🔗 Bot V3 đã kết nối Telegram thành công!");
+                      } catch (err) {
+                          console.error("Lỗi lưu Telegram:", err);
+                          addLog("Lỗi khi lưu cấu hình Telegram!", "danger");
+                      }
+                  }} className="flex-1 py-3 bg-blue-600 rounded-xl text-white font-black hover:bg-blue-700">LƯU CÀI ĐẶT</button>
               </div>
           </div>
         </div>
       )}
 
+      {/* HEADER */}
       <div className="flex flex-wrap justify-between items-center bg-[#1e2329] p-4 sm:p-5 rounded-3xl border border-gray-800 shadow-2xl gap-4">
         <div className="flex items-center gap-4">
           <div className="p-3 bg-purple-600 rounded-2xl text-white shadow-xl shadow-purple-900/30"><Zap size={24} fill="currentColor" /></div>
@@ -433,10 +462,11 @@ export default function BitcoinTradingBot() {
         </div>
       </div>
 
+      {/* MAIN CONTENT */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
         <div className="lg:col-span-8 space-y-5">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-            <div className="bg-[#1e2329] p-6 rounded-3xl border border-gray-800 shadow-xl relative overflow-hidden group">
+            <div className="bg-[#1e2329] p-6 rounded-3xl border border-gray-800 shadow-xl relative group overflow-hidden">
                 <div className="absolute -bottom-4 -right-4 opacity-5"><Wallet size={120}/></div>
                 <span className="text-[10px] text-gray-500 uppercase font-black tracking-widest block mb-1">Ví USDT (Mây)</span>
                 <p className="text-4xl font-mono font-black text-white tracking-tighter">${Number(account.balance).toLocaleString()}</p>
@@ -453,7 +483,7 @@ export default function BitcoinTradingBot() {
                       <p className={`text-sm font-bold ${Number(uPnl) >= 0 ? 'text-green-400' : 'text-red-400'}`}>{Number(uPnl) > 0 ? '+' : ''}{Number(uPnl).toFixed(2)} ({Number(uRoe).toFixed(1)}%)</p>
                     </div>
                     <div className="mt-4 pt-4 border-t border-gray-800 flex justify-between text-[10px] text-gray-500 font-bold uppercase">
-                       <span>E: ${Number(position.entry).toLocaleString()}</span>
+                       <span>Entry: ${Number(position.entry).toLocaleString()}</span>
                        <span>TP: ${Number(position.tp).toLocaleString()}</span>
                     </div>
                   </div>
