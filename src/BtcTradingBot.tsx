@@ -239,6 +239,7 @@ export default function BitcoinTradingBot() {
   
   const logsEndRef = useRef<HTMLDivElement>(null);
   const tgConfigRef = useRef(tgConfig);
+  const latestPositionsRef = useRef(positions);
 
   // Khởi tạo Refs an toàn
   if (Object.keys(isProcessingRef.current).length === 0) {
@@ -251,6 +252,7 @@ export default function BitcoinTradingBot() {
   }
 
   useEffect(() => { tgConfigRef.current = tgConfig; }, [tgConfig]);
+  useEffect(() => { latestPositionsRef.current = positions; }, [positions]);
 
   // Auth Init
   useEffect(() => {
@@ -424,17 +426,32 @@ export default function BitcoinTradingBot() {
     setLogs(prev => [{ msg: String(msg), type: String(type), time: String(time) }, ...prev.slice(0, 49)]);
   };
 
-  // Telegram Heartbeat
+  // ============================================================================
+  // HỆ THỐNG HEARTBEAT 10 PHÚT (ĐỘC LẬP HOÀN TOÀN)
+  // ============================================================================
   useEffect(() => {
+    // Chỉ kích hoạt khi bật Bot và đã đăng nhập
     if (!isRunning || !user) return;
+    
+    // 1. Bắn Noti ngay khi vừa Bật Bot để xác nhận kết nối Telegram
+    sendTelegram(`🟢 <b>HỆ THỐNG ĐÃ KHỞI ĐỘNG</b>\n• Đang quét song song: ${SYMBOLS.join(' & ')}\n• Chu kỳ báo cáo: 10 phút/lần`);
+    
+    // 2. Thiết lập chu kỳ 10 phút hoàn toàn cách ly
     const heartbeat = setInterval(() => {
-      const activeText = Object.keys(positions).length > 0 ? `Giữ: ${Object.keys(positions).join(', ')}` : 'Đang chờ tín hiệu';
-      const msg = `💓 <b>NHỊP ĐẬP BOT ĐA CẶP</b>\n• Tín hiệu: ${activeText}\n• Ví: ${latestAccountRef.current.balance.toFixed(2)} USDT\n• Trạng thái: 🟢 Quét 2 mã song song bình thường`;
+      const currentPos = latestPositionsRef.current;
+      const activeText = Object.keys(currentPos).length > 0 ? `Đang giữ: ${Object.keys(currentPos).join(', ')}` : 'Đang chờ tín hiệu';
+      const msg = `💓 <b>KIỂM TRA SỨC KHỎE BOT</b>\n• Tình trạng: 🟢 Hoạt động mượt mà\n• Trạng thái lệnh: ${activeText}\n• Ví hiện tại: ${latestAccountRef.current.balance.toFixed(2)} USDT`;
+      
       sendTelegram(msg);
-      addLog("[SYSTEM] Đã gửi trạng thái an toàn về Telegram (Heartbeat).", "info");
+      addLog("[SYSTEM] Đã gửi báo cáo kiểm tra sức khỏe 10 phút.", "info");
     }, CONFIG.HEARTBEAT_MS);
-    return () => clearInterval(heartbeat);
-  }, [isRunning, user, positions]);
+    
+    // 3. Xử lý khi Dừng Bot
+    return () => {
+      clearInterval(heartbeat);
+      sendTelegram(`🔴 <b>HỆ THỐNG ĐÃ DỪNG</b>\n• Bot đã ngừng quét thị trường.`);
+    };
+  }, [isRunning, user]); // Dependency mảng chỉ có isRunning và user -> Không bao giờ bị reset bởi biến động giá
 
   // ============================================================================
   // LOGIC VÀO LỆNH KHẮT KHE (LẶP QUA TỪNG MÃ)
