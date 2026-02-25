@@ -19,9 +19,9 @@ export default function SentimentIndicators({ sentiment }: SentimentIndicatorsPr
 
     return (
         <div className="flex flex-wrap items-center justify-center sm:justify-start gap-1.5 sm:gap-2">
-            {(['1m', '5m', '15m'] as const).map((tf) => (
+            {(['1m', '5m', '15m', '1h', '4h', '1d'] as const).map((tf) => (
                 <span key={tf} className={`${getBadgeColor(sentiment[tf])} border text-[8px] sm:text-[9px] px-1.5 sm:px-2 py-0.5 rounded-full flex items-center gap-1 font-bold uppercase tracking-widest`}>
-                    {getIcon(sentiment[tf])} {tf}: {sentiment[tf]}
+                    {getIcon(sentiment[tf])} {tf}
                 </span>
             ))}
         </div>

@@ -14,8 +14,8 @@ import {
   Position, TelegramConfig, MTFSentiment
 } from './types';
 import {
-  calculateRSI, calculateFullEMA, getMACD,
-  detectSMC, calculateScores
+  calculateRSI, calculateZLEMA, getMACD,
+  detectSMC, calculateScores, calculateSMA
 } from './utils/indicators';
 
 // Components
@@ -41,7 +41,8 @@ export default function BitcoinTradingBot() {
   });
 
   const [sentiment, setSentiment] = useState<MTFSentiment>({
-    '1m': 'NEUTRAL', '5m': 'NEUTRAL', '15m': 'NEUTRAL'
+    '1m': 'NEUTRAL', '5m': 'NEUTRAL', '15m': 'NEUTRAL',
+    '1h': 'NEUTRAL', '4h': 'NEUTRAL', '1d': 'NEUTRAL'
   });
 
   const [isRunning, setIsRunning] = useState(false);
@@ -64,6 +65,9 @@ export default function BitcoinTradingBot() {
   const latestPriceRef = useRef(currentPrice);
   const latestAccountRef = useRef(account);
   const positionRef = useRef(position);
+  const candlesRef = useRef(candles); // Added for processAndSetData
+  const sentimentRef = useRef(sentiment); // Added for processAndSetData
+  const isTradingActive = useRef(isRunning); // Added for processAndSetData
 
   // Sync refs
   useEffect(() => { tgConfigRef.current = tgConfig; }, [tgConfig]);
@@ -71,6 +75,9 @@ export default function BitcoinTradingBot() {
   useEffect(() => { latestAccountRef.current = account; }, [account]);
   useEffect(() => { positionRef.current = position; }, [position]);
   useEffect(() => { logsEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [logs, activeTab]);
+  useEffect(() => { candlesRef.current = candles; }, [candles]); // Added
+  useEffect(() => { sentimentRef.current = sentiment; }, [sentiment]); // Added
+  useEffect(() => { isTradingActive.current = isRunning; }, [isRunning]); // Added
 
   // Auth Init
   useEffect(() => {
@@ -88,8 +95,12 @@ export default function BitcoinTradingBot() {
     const unsubAcc = onSnapshot(userRef, (d) => {
       if (d.exists()) {
         const data = d.data();
-        setAccount({ balance: Number(data.balance) || 0, pnlHistory: Number(data.pnlHistory) || 0 });
-        setTgConfig({ token: String(data.tgToken || ''), chatId: String(data.tgChatId || '') });
+        if (Number(data.balance) === 10000 && Number(data.pnlHistory) === 0) {
+          setDoc(userRef, { balance: 1000, pnlHistory: 0, tgToken: data.tgToken || '', tgChatId: data.tgChatId || '' });
+        } else {
+          setAccount({ balance: Number(data.balance) || 0, pnlHistory: Number(data.pnlHistory) || 0 });
+          setTgConfig({ token: String(data.tgToken || ''), chatId: String(data.tgChatId || '') });
+        }
       } else setDoc(userRef, { balance: CONFIG.INITIAL_BALANCE, pnlHistory: 0 });
     });
 
@@ -138,24 +149,28 @@ export default function BitcoinTradingBot() {
   }, [isRunning, user]);
 
   const fetchMTFData = async () => {
-    const timeframes: ('5m' | '15m')[] = ['5m', '15m'];
-    const newSentiment = { ...sentiment };
+    try {
+      const intervals: (keyof MTFSentiment)[] = ['1m', '5m', '15m', '1h', '4h', '1d'];
+      const newSentiment: Partial<MTFSentiment> = {};
 
-    for (const tf of timeframes) {
-      try {
-        const res = await fetch(`https://api.binance.com/api/v3/klines?symbol=${CONFIG.SYMBOL}&interval=${tf}&limit=50`);
+      for (const int of intervals) {
+        const res = await fetch(`https://api.binance.com/api/v3/klines?symbol=${CONFIG.SYMBOL}&interval=${int}&limit=${CONFIG.EMA_PERIOD + 1}`);
         const data = await res.json();
-        const prices = data.map((k: any) => parseFloat(k[4]));
-        const emaArr = calculateFullEMA(prices, CONFIG.EMA_PERIOD);
-        const lastClose = prices[prices.length - 1];
-        const lastEma = emaArr[emaArr.length - 1];
+        if (data && data.length > 0) {
+          const closes = data.map((d: any) => parseFloat(d[4]));
+          const ema = calculateZLEMA(closes, CONFIG.EMA_PERIOD);
+          const currentPrice = closes[closes.length - 1];
+          const currentEma = ema[ema.length - 1];
 
-        newSentiment[tf] = lastClose > lastEma ? 'BULLISH' : 'BEARISH';
-      } catch (e) {
-        console.error(`Error fetching ${tf} data`, e);
+          if (currentPrice > currentEma) newSentiment[int] = 'BULLISH';
+          else if (currentPrice < currentEma) newSentiment[int] = 'BEARISH';
+          else newSentiment[int] = 'NEUTRAL';
+        }
       }
+      setSentiment(prev => ({ ...prev, ...newSentiment }));
+    } catch (e) {
+      console.error("Error fetching MTF data", e);
     }
-    setSentiment(newSentiment);
   };
 
   useEffect(() => {
@@ -167,28 +182,127 @@ export default function BitcoinTradingBot() {
   }, [isRunning]);
 
   const processAndSetData = (newCandles: Candle[]) => {
-    const prices = newCandles.map(c => c.close);
-    const lastCandle = newCandles[newCandles.length - 1];
-
-    const rsi = calculateRSI(prices, CONFIG.RSI_PERIOD);
-    const emaArr = calculateFullEMA(prices, CONFIG.EMA_PERIOD);
-    const ema = emaArr[emaArr.length - 1] || lastCandle.close;
-    const macd = getMACD(prices);
-
-    const vols = newCandles.map(c => c.volume);
-    const volSma = vols.slice(Math.max(0, vols.length - 20)).reduce((a, b) => a + b, 0) / 20;
-
-    const { fvg, ob } = detectSMC(newCandles);
-    const trend = lastCandle.close > ema ? 'UP' : 'DOWN';
-
-    const score = calculateScores({ rsi, ema, macd, fvg, ob, trend }, lastCandle, CONFIG);
-
     setCandles(newCandles);
+    const lastCandle = newCandles[newCandles.length - 1];
     setCurrentPrice(lastCandle.close);
-    setAnalysis({ rsi, ema, macd, volSma, fvg, ob, trend, score });
+
+    if (newCandles.length < CONFIG.EMA_PERIOD) return;
+
+    const closes = newCandles.map(c => c.close);
+    const volumes = newCandles.map(c => c.volume);
+    const close = lastCandle.close;
+
+    const rsi = calculateRSI(closes, CONFIG.RSI_PERIOD);
+    const emaArr = calculateZLEMA(closes, CONFIG.EMA_PERIOD);
+    const currentEma = emaArr[emaArr.length - 1];
+    const macd = getMACD(closes);
+    const { fvg, ob } = detectSMC(newCandles);
+    const volSma = calculateSMA(volumes, CONFIG.VOL_SMA_PERIOD);
+
+    const trend = close > currentEma ? 'UP' : 'DOWN';
+    const score = calculateScores({ rsi, ema: currentEma, macd, fvg, ob, trend }, lastCandle, CONFIG);
+
+    const newAnalysis: Analysis = {
+      rsi,
+      ema: currentEma,
+      macd,
+      volSma,
+      fvg,
+      ob,
+      trend,
+      score
+    };
+
+    setAnalysis(newAnalysis);
     setSentiment(prev => ({ ...prev, '1m': trend === 'UP' ? 'BULLISH' : 'BEARISH' }));
 
-    return { currentPrice: lastCandle.close, analysis: { rsi, ema, macd, volSma, fvg, ob, trend, score }, lastCandle };
+    // --- TRADING LOGIC WITH MTF & VOLUME FILTERS ---
+    if (!isTradingActive.current || !user) return;
+
+    const now = Date.now();
+    const shouldLogAnalysis = now - lastAnalysisLogTime.current >= CONFIG.LOG_INTERVAL_MS;
+
+    if (positionRef.current) {
+      if (isProcessingRef.current) return;
+
+      const isL = String(positionRef.current.type) === 'LONG';
+      const pnl = isL ? (close - positionRef.current.entryPrice) * (positionRef.current.size / positionRef.current.entryPrice) : (positionRef.current.entryPrice - close) * (positionRef.current.size / positionRef.current.entryPrice);
+
+      let r = '';
+      if ((isL && close >= positionRef.current.tpPrice) || (!isL && close <= positionRef.current.tpPrice)) r = 'TAKE PROFIT';
+      if ((isL && close <= positionRef.current.slPrice) || (!isL && close >= positionRef.current.slPrice)) r = 'STOP LOSS';
+
+      if (r) {
+        isProcessingRef.current = true;
+        handleCloseOrder(r, pnl);
+      } else if (shouldLogAnalysis) {
+        addLog(`Đang nắm giữ ${positionRef.current.type} (PnL Ròng: ${pnl > 0 ? '+' : ''}${pnl.toFixed(2)} USDT). AI giám sát điểm thanh lý...`, 'analysis');
+        lastAnalysisLogTime.current = now;
+      }
+      return;
+    }
+
+    if (isProcessingRef.current || now - lastTradeTimeRef.current < CONFIG.COOLDOWN_MS) return;
+    if (latestAccountRef.current.balance < 10) return;
+
+    // 1. Volume Filter: Bỏ qua nếu thanh nến hiện tại có Vol thấp hơn trung bình 20 phiên
+    const lastVolume = lastCandle.volume;
+    if (lastVolume < volSma * CONFIG.VOL_MULTIPLIER) {
+      if (shouldLogAnalysis) addLog(`Bỏ qua lệnh: Khối lượng (${lastVolume.toFixed(2)}) thấp hơn mức trung bình (${volSma.toFixed(2)}).`, 'info');
+      lastAnalysisLogTime.current = now;
+      return;
+    }
+
+    // 2. MTF Alignment: Xu hướng 1m phải đồng thuận với 5m và 15m
+    const trend5m = sentimentRef.current['5m'];
+    const trend15m = sentimentRef.current['15m'];
+    const currentTrend = newAnalysis.trend === 'UP' ? 'BULLISH' : 'BEARISH';
+
+    if (trend5m !== currentTrend || trend15m !== currentTrend) {
+      if (shouldLogAnalysis) addLog(`Bỏ qua lệnh: MTF không đồng thuận (1m: ${currentTrend}, 5m: ${trend5m}, 15m: ${trend15m}).`, 'info');
+      lastAnalysisLogTime.current = now;
+      return;
+    }
+
+    // Lọc độ mạnh của tín hiệu RSI (Mean Reversion / Pullback)
+    let signalType: 'LONG' | 'SHORT' | null = null;
+    const rsiThreshold = CONFIG.RSI_OVERBOUGHT_OVERSOLD;
+
+    if (newAnalysis.score >= CONFIG.CONFLUENCE_THRESHOLD) {
+      // Strong Buy Signal
+      if (newAnalysis.rsi < rsiThreshold.oversold) {
+        signalType = 'LONG'; // Oversold, potential bounce
+      } else if (newAnalysis.rsi > rsiThreshold.neutral_low && newAnalysis.rsi < rsiThreshold.neutral_high) {
+        signalType = 'LONG'; // Neutral, but strong SMC
+      }
+    } else if (newAnalysis.score <= -CONFIG.CONFLUENCE_THRESHOLD) {
+      // Strong Sell Signal
+      if (newAnalysis.rsi > rsiThreshold.overbought) {
+        signalType = 'SHORT'; // Overbought, potential drop
+      } else if (newAnalysis.rsi > rsiThreshold.neutral_low && newAnalysis.rsi < rsiThreshold.neutral_high) {
+        signalType = 'SHORT'; // Neutral, but strong SMC
+      }
+    }
+
+    if (signalType) {
+      isProcessingRef.current = true;
+      handleOpenOrder(signalType, close, 50, newAnalysis);
+      lastAnalysisLogTime.current = now;
+      return;
+    }
+
+    if (shouldLogAnalysis) {
+      let thought = `Quét đa tín hiệu [Điểm: ${newAnalysis.score > 0 ? '+' + newAnalysis.score : newAnalysis.score}/5]. `;
+      if (lastVolume < volSma * CONFIG.VOL_MULTIPLIER) thought += `Thanh khoản thấp (${(lastVolume / (volSma || 1)).toFixed(1)}x tb). `;
+      if (trend5m !== currentTrend || trend15m !== currentTrend) thought += `MTF không đồng thuận. `;
+
+      if (newAnalysis.score === 0) thought += `Thị trường Sideway/Nhiễu. Tạm dừng giao dịch.`;
+      else if (newAnalysis.score > 0 && newAnalysis.score < CONFIG.CONFLUENCE_THRESHOLD) thought += `Phe Mua đang gom hàng (FVG/OB) nhưng xung lực chưa đủ. Rình mồi LONG...`;
+      else if (newAnalysis.score < 0 && newAnalysis.score > -CONFIG.CONFLUENCE_THRESHOLD) thought += `Phe Bán đang áp đảo. Áp lực MACD yếu. Rình mồi SHORT...`;
+
+      addLog(`AI Radar: ${thought}`, 'analysis');
+      lastAnalysisLogTime.current = now;
+    }
   };
 
   // WebSocket Loop
@@ -230,67 +344,6 @@ export default function BitcoinTradingBot() {
     return () => ws?.close();
   }, []);
 
-  // Trading Logic
-  useEffect(() => {
-    if (!isRunning || !user || currentPrice === 0 || candles.length < CONFIG.EMA_PERIOD) return;
-
-    const now = Date.now();
-    const shouldLogAnalysis = now - lastAnalysisLogTime.current >= CONFIG.LOG_INTERVAL_MS;
-
-    if (position) {
-      if (isProcessingRef.current) return;
-
-      const isL = String(position.type) === 'LONG';
-      const pnl = isL ? (currentPrice - position.entryPrice) * (position.size / position.entryPrice) : (position.entryPrice - currentPrice) * (position.size / position.entryPrice);
-
-      let r = '';
-      if ((isL && currentPrice >= position.tpPrice) || (!isL && currentPrice <= position.tpPrice)) r = 'TAKE PROFIT';
-      if ((isL && currentPrice <= position.slPrice) || (!isL && currentPrice >= position.slPrice)) r = 'STOP LOSS';
-
-      if (r) {
-        isProcessingRef.current = true;
-        handleCloseOrder(r, pnl);
-      } else if (shouldLogAnalysis) {
-        addLog(`Đang nắm giữ ${position.type} (PnL Ròng: ${pnl > 0 ? '+' : ''}${pnl.toFixed(2)} USDT). AI giám sát điểm thanh lý...`, 'analysis');
-        lastAnalysisLogTime.current = now;
-      }
-      return;
-    }
-
-    if (isProcessingRef.current || now - lastTradeTimeRef.current < CONFIG.COOLDOWN_MS) return;
-    if (account.balance < 10) return;
-
-    const vol = candles[candles.length - 1].volume;
-    const isVolOk = vol > (analysis.volSma * CONFIG.VOL_MULTIPLIER);
-    const volRatio = (vol / (analysis.volSma || 1)).toFixed(1);
-
-    const canLong = isVolOk && analysis.score >= CONFIG.CONFLUENCE_THRESHOLD;
-    const canShort = isVolOk && analysis.score <= -CONFIG.CONFLUENCE_THRESHOLD;
-
-    if (canLong) {
-      isProcessingRef.current = true;
-      handleOpenOrder('LONG', currentPrice, account.balance, analysis);
-      return;
-    }
-    if (canShort) {
-      isProcessingRef.current = true;
-      handleOpenOrder('SHORT', currentPrice, account.balance, analysis);
-      return;
-    }
-
-    if (shouldLogAnalysis) {
-      let thought = `Quét đa tín hiệu [Điểm: ${analysis.score > 0 ? '+' + analysis.score : analysis.score}/5]. `;
-      if (!isVolOk) thought += `Thanh khoản thấp (${volRatio}x tb). `;
-
-      if (analysis.score === 0) thought += `Thị trường Sideway/Nhiễu. Tạm dừng giao dịch.`;
-      else if (analysis.score > 0 && analysis.score < CONFIG.CONFLUENCE_THRESHOLD) thought += `Phe Mua đang gom hàng (FVG/OB) nhưng xung lực chưa đủ. Rình mồi LONG...`;
-      else if (analysis.score < 0 && analysis.score > -CONFIG.CONFLUENCE_THRESHOLD) thought += `Phe Bán đang áp đảo. Áp lực MACD yếu. Rình mồi SHORT...`;
-
-      addLog(`AI Radar: ${thought}`, 'analysis');
-      lastAnalysisLogTime.current = now;
-    }
-  }, [currentPrice, isRunning, position, analysis, candles]);
-
   const handleOpenOrder = async (type: 'LONG' | 'SHORT', price: number, margin: number, a: Analysis) => {
     const size = margin * CONFIG.LEVERAGE;
     const fee = size * CONFIG.FEE;
@@ -316,7 +369,7 @@ export default function BitcoinTradingBot() {
     };
 
     try {
-      await setDoc(doc(db, 'artifacts', APP_ID, 'users', user!.uid, 'account', 'data'), { balance: 0 }, { merge: true });
+      await setDoc(doc(db, 'artifacts', APP_ID, 'users', user!.uid, 'account', 'data'), { balance: latestAccountRef.current.balance - margin }, { merge: true });
       await setDoc(doc(db, 'artifacts', APP_ID, 'users', user!.uid, 'position', 'active'), { active: true, details });
       sendTelegram(`🚀 <b>BOT MỞ ${type}</b>\n• Giá: ${price.toLocaleString()}\n• Điểm SMC: ${a.score}/5\n• RSI: ${a.rsi.toFixed(1)}`);
       addLog(`VÀO ${type}: Tín hiệu ${setupName} chuẩn xác. SMC Score: ${a.score}`, 'success');

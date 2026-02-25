@@ -11,14 +11,15 @@ export const CONFIG = {
     MACD_SIGNAL: 9,
 
     // Logic Tín hiệu
-    RSI_OVERSOLD: 35,
-    RSI_OVERBOUGHT: 65,
+    RSI_OVERSOLD: 30, // Chặt chẽ hơn, trước đây là 35
+    RSI_OVERBOUGHT: 70, // Chặt chẽ hơn, trước đây là 65
     VOL_MULTIPLIER: 1.2,
-    CONFLUENCE_THRESHOLD: 4, // Yêu cầu ít nhất 4/5 tín hiệu đồng thuận (Mới)
+    VOL_SMA_PERIOD: 20, // Đường SMA 20 cho Volume Filter
+    CONFLUENCE_THRESHOLD: 4, // Yêu cầu ít nhất 4/5 tín hiệu đồng thuận
 
     // Quản lý vốn & Cloud
     LEVERAGE: 50,
-    INITIAL_BALANCE: 10000,
+    INITIAL_BALANCE: 1000,
     TP_PERCENT: 0.008,
     SL_PERCENT: 0.004,
     FEE: 0.0004,

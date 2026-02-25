@@ -1,4 +1,3 @@
-import { User } from 'firebase/auth';
 
 export interface Candle {
     time: number;
@@ -60,4 +59,7 @@ export interface MTFSentiment {
     '1m': 'BULLISH' | 'BEARISH' | 'NEUTRAL';
     '5m': 'BULLISH' | 'BEARISH' | 'NEUTRAL';
     '15m': 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+    '1h': 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+    '4h': 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+    '1d': 'BULLISH' | 'BEARISH' | 'NEUTRAL';
 }
