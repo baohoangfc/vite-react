@@ -2,11 +2,27 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Thêm css cho thanh cuộn (tùy chọn) */
+:root {
+  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+  color-scheme: dark;
+  background-color: #0b0e11;
+}
+
+body {
+  margin: 0;
+  display: flex;
+  place-items: start;
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+/* Custom scrollbar cho Nhật ký AI */
 .custom-scrollbar::-webkit-scrollbar {
   width: 4px;
 }
 .custom-scrollbar::-webkit-scrollbar-thumb {
-  background: #374151;
+  background: #2b3139;
   border-radius: 4px;
 }
