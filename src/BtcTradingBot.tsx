@@ -61,8 +61,7 @@ const APP_ID = getSafeAppId();
 // ============================================================================
 const CONFIG = {
   SYMBOL: 'BTCUSDT',
-  INTERVAL: '1m',       
-  LIMIT_CANDLES: 250, // Cần 200 nến để tính MA200 chính xác
+  LIMIT_CANDLES: 250, // Cần 200 nến để tính MA200
   RSI_PERIOD: 14,
   EMA_PERIOD: 50,
   MA_PERIOD: 200,
@@ -73,6 +72,7 @@ const CONFIG = {
   FEE: 0.0004, 
   HEARTBEAT_MS: 10 * 60 * 1000, 
   COOLDOWN_MS: 60 * 1000, 
+  REASONING_MS: 60 * 1000, 
 };
 
 // --- CHỈ BÁO CƠ BẢN ---
@@ -110,15 +110,13 @@ const calculateEMA = (candles: any[], period: number) => {
 const findOrderBlocks = (candles: any[], lookback: number = 20) => {
     const obs = { bullish: [] as any[], bearish: [] as any[] };
     if (candles.length < lookback + 2) return obs;
-    const recent = candles.slice(-(lookback + 1), -1); // Bỏ nến hiện tại đang chạy
+    const recent = candles.slice(-(lookback + 1), -1); 
     
     for (let i = 0; i < recent.length - 2; i++) {
         const c1 = recent[i], c2 = recent[i+1];
-        // Bullish OB: Nến đỏ cuối cùng trước một nhịp tăng mạnh
         if (!c1.isGreen && c2.isGreen && c2.close > c1.high) {
             obs.bullish.push({ top: Math.max(c1.open, c1.close), bottom: c1.low });
         }
-        // Bearish OB: Nến xanh cuối cùng trước một nhịp giảm mạnh
         if (c1.isGreen && !c2.isGreen && c2.close < c1.low) {
             obs.bearish.push({ top: c1.high, bottom: Math.min(c1.open, c1.close) });
         }
@@ -133,9 +131,7 @@ const findFVGs = (candles: any[], lookback: number = 20) => {
     
     for (let i = 0; i < recent.length - 2; i++) {
         const c1 = recent[i], c3 = recent[i+2];
-        // Bullish FVG: Râu nến 1 không chạm râu nến 3 trong nhịp tăng
         if (c1.high < c3.low) fvgs.bullish.push({ top: c3.low, bottom: c1.high });
-        // Bearish FVG: Râu nến 1 không chạm râu nến 3 trong nhịp giảm
         if (c1.low > c3.high) fvgs.bearish.push({ top: c1.low, bottom: c3.high });
     }
     return fvgs;
@@ -196,7 +192,7 @@ function AuthScreen() {
       <div className="bg-[#1e2329] p-8 rounded-[2rem] border border-gray-800 w-full max-w-md shadow-2xl relative">
         <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-purple-500 via-blue-500 to-green-500"></div>
         <div className="flex justify-center mb-6"><div className="p-4 bg-purple-600 rounded-2xl shadow-xl"><ShieldCheck size={40} /></div></div>
-        <h2 className="text-2xl font-black text-center mb-2 uppercase tracking-tighter">Bot Pro SMC</h2>
+        <h2 className="text-2xl font-black text-center mb-2 uppercase tracking-tighter">Bot Pro SMC (MTF)</h2>
         <form onSubmit={handleAuth} className="space-y-4">
           <input type="email" value={email} onChange={e => setEmail(e.target.value)} required className="w-full bg-[#0b0e11] border border-gray-700 rounded-xl p-4 text-sm outline-none" placeholder="Địa chỉ Email" />
           <input type="password" value={password} onChange={e => setPassword(e.target.value)} required className="w-full bg-[#0b0e11] border border-gray-700 rounded-xl p-4 text-sm outline-none" placeholder="Mật khẩu bảo mật" />
@@ -225,8 +221,10 @@ export default function BitcoinTradingBot() {
   const [activeTab, setActiveTab] = useState<'LOGS' | 'HISTORY'>('LOGS');
   const [showSettings, setShowSettings] = useState(false);
 
-  // Indicators State (UI)
+  // States MTF & Indicators
+  const [mtfTrends, setMtfTrends] = useState({ '15m': 'UNKNOWN', '1h': 'UNKNOWN', '4h': 'UNKNOWN', '1d': 'UNKNOWN' });
   const [indicators, setIndicators] = useState({ rsi: 50, ema50: 0, ma200: 0 });
+  const mtfCandlesRef = useRef<Record<string, any[]>>({ '15m': [], '1h': [], '4h': [], '1d': [] });
 
   const [account, setAccount] = useState({ balance: CONFIG.INITIAL_BALANCE, pnlHistory: 0 });
   const [position, setPosition] = useState<any>(null);
@@ -241,6 +239,7 @@ export default function BitcoinTradingBot() {
   
   const isProcessingRef = useRef(false);
   const lastTradeTimeRef = useRef<number>(0);
+  const lastReasoningTimeRef = useRef<number>(0);
 
   useEffect(() => { tgConfigRef.current = tgConfig; }, [tgConfig]);
   useEffect(() => { latestPriceRef.current = currentPrice; }, [currentPrice]);
@@ -282,36 +281,84 @@ export default function BitcoinTradingBot() {
     return () => { unsubAcc(); unsubPos(); unsubHist(); };
   }, [user]);
 
-  // Data Fetch & Indicators Calculation
+  // Động cơ dữ liệu Đa khung thời gian (MTF Engine)
   useEffect(() => {
     let ws: WebSocket;
+    const intervals = ['1m', '15m', '1h', '4h', '1d'];
+    
     const loadHistory = async () => {
         try {
-            const res = await fetch(`https://api.binance.com/api/v3/klines?symbol=${CONFIG.SYMBOL}&interval=${CONFIG.INTERVAL}&limit=${CONFIG.LIMIT_CANDLES}`);
-            const data = await res.json();
-            const formatted = data.map((k: any) => ({
+            const fetches = intervals.map(inv =>
+                fetch(`https://api.binance.com/api/v3/klines?symbol=${CONFIG.SYMBOL}&interval=${inv}&limit=${CONFIG.LIMIT_CANDLES}`).then(r => r.json())
+            );
+            const results = await Promise.all(fetches);
+
+            const formatData = (data: any[]) => data.map((k: any) => ({
                 time: Number(k[0]), open: parseFloat(k[1]), high: parseFloat(k[2]), low: parseFloat(k[3]), close: parseFloat(k[4]), isGreen: parseFloat(k[4]) >= parseFloat(k[1])
             }));
-            setCandles(formatted);
-            if (formatted.length > 0) setCurrentPrice(formatted[formatted.length - 1].close);
-        } catch (e) { console.error(e); }
+
+            // Cập nhật M1
+            const c1m = formatData(results[0]);
+            setCandles(c1m);
+            if (c1m.length > 0) setCurrentPrice(c1m[c1m.length - 1].close);
+
+            // Cập nhật MTF
+            mtfCandlesRef.current['15m'] = formatData(results[1]);
+            mtfCandlesRef.current['1h'] = formatData(results[2]);
+            mtfCandlesRef.current['4h'] = formatData(results[3]);
+            mtfCandlesRef.current['1d'] = formatData(results[4]);
+            
+            updateMtfTrends(c1m.length > 0 ? c1m[c1m.length - 1].close : 0);
+        } catch (e) { console.error("History fetch error"); }
+    };
+
+    const updateMtfTrends = (currentP: number) => {
+        const newTrends: any = {};
+        ['15m', '1h', '4h', '1d'].forEach(inv => {
+            const c = mtfCandlesRef.current[inv];
+            if (c && c.length > 0) {
+                const ema = calculateEMA(c, CONFIG.EMA_PERIOD);
+                // Trend được xác định bằng việc giá hiện tại nằm trên hay dưới EMA50 của khung đó
+                newTrends[inv] = currentP > ema ? 'UP' : 'DOWN';
+            } else {
+                newTrends[inv] = 'UNKNOWN';
+            }
+        });
+        setMtfTrends(newTrends);
     };
 
     loadHistory().then(() => {
-        ws = new WebSocket(`wss://stream.binance.com:9443/ws/${CONFIG.SYMBOL.toLowerCase()}@kline_1m`);
+        // Mở kết nối Multiplex WebSocket
+        const streams = intervals.map(inv => `${CONFIG.SYMBOL.toLowerCase()}@kline_${inv}`).join('/');
+        ws = new WebSocket(`wss://stream.binance.com:9443/stream?streams=${streams}`);
+        
         ws.onmessage = (e) => {
             try {
-                const data = JSON.parse(e.data).k;
+                const parsed = JSON.parse(e.data);
+                if (!parsed || !parsed.data || !parsed.data.k) return;
+                const data = parsed.data.k;
+                const streamInv = data.i;
                 const price = parseFloat(data.c);
-                setCurrentPrice(price);
-                
-                setCandles(prev => {
-                    const lastIdx = prev.length - 1;
-                    const candle = { time: Number(data.t), open: parseFloat(data.o), high: parseFloat(data.h), low: parseFloat(data.l), close: price, isGreen: price >= parseFloat(data.o) };
-                    if (prev.length > 0 && prev[lastIdx].time === Number(data.t)) {
-                        const newArr = [...prev]; newArr[lastIdx] = candle; return newArr;
-                    } else { return [...prev.slice(-(CONFIG.LIMIT_CANDLES - 1)), candle]; }
-                });
+                const candle = { time: Number(data.t), open: parseFloat(data.o), high: parseFloat(data.h), low: parseFloat(data.l), close: price, isGreen: price >= parseFloat(data.o) };
+
+                if (streamInv === '1m') {
+                    setCurrentPrice(price);
+                    setCandles(prev => {
+                        const lastIdx = prev.length - 1;
+                        if (prev.length > 0 && prev[lastIdx].time === Number(data.t)) {
+                            const newArr = [...prev]; newArr[lastIdx] = candle; return newArr;
+                        } else { return [...prev.slice(-(CONFIG.LIMIT_CANDLES - 1)), candle]; }
+                    });
+                    updateMtfTrends(price);
+                } else {
+                    // Update MTF Cache Background
+                    const mtfArr = mtfCandlesRef.current[streamInv];
+                    if (mtfArr && mtfArr.length > 0) {
+                        const lastIdx = mtfArr.length - 1;
+                        if (mtfArr[lastIdx].time === Number(data.t)) mtfArr[lastIdx] = candle;
+                        else { mtfArr.push(candle); if (mtfArr.length > CONFIG.LIMIT_CANDLES) mtfArr.shift(); }
+                    }
+                }
             } catch (err) {}
         };
     });
@@ -341,18 +388,30 @@ export default function BitcoinTradingBot() {
     const heartbeat = setInterval(() => {
       const msg = `💓 <b>TRẠNG THÁI BOT SMC</b>\n• Giá: ${latestPriceRef.current.toLocaleString()} USD\n• Ví: ${latestAccountRef.current.balance.toFixed(2)} USDT\n• Trạng thái: 🟢 Quét thị trường bình thường`;
       sendTelegram(msg);
-      addLog("Gửi trạng thái an toàn về Telegram (10 phút).", "info");
+      addLog("Đã gửi trạng thái an toàn về Telegram (Heartbeat 10m).", "info");
     }, CONFIG.HEARTBEAT_MS);
+    
     return () => clearInterval(heartbeat);
   }, [isRunning, user]);
 
   // ============================================================================
-  // LOGIC VÀO LỆNH KHẮT KHE (SMC + EMA/MA + RSI)
+  // LOGIC VÀO LỆNH KHẮT KHE (MTF + SMC + EMA/MA + RSI) & NHẬT KÝ AI
   // ============================================================================
   useEffect(() => {
-    if (!isRunning || !user || currentPrice === 0 || isProcessingRef.current || candles.length < CONFIG.MA_PERIOD) return;
+    if (!isRunning || !user || currentPrice === 0 || candles.length < CONFIG.MA_PERIOD) return;
 
+    const now = Date.now();
+    const ema50 = indicators.ema50;
+    const ma200 = indicators.ma200;
+    const rsi = indicators.rsi;
+    
+    // Thống kê sức mạnh MTF
+    const upCount = Object.values(mtfTrends).filter(t => t === 'UP').length;
+    const downCount = Object.values(mtfTrends).filter(t => t === 'DOWN').length;
+
+    // Xử lý đóng lệnh nếu đang giữ Position
     if (position) {
+      if (isProcessingRef.current) return;
       const isL = String(position.type) === 'LONG';
       const entry = Number(position.entry);
       const size = Number(position.size);
@@ -367,48 +426,68 @@ export default function BitcoinTradingBot() {
       if (r) {
          isProcessingRef.current = true; 
          handleCloseOrder(r, pnl);
+      } else if (now - lastReasoningTimeRef.current >= CONFIG.REASONING_MS) {
+         lastReasoningTimeRef.current = now;
+         addLog(`Đang gồng lệnh ${position.type} (PnL: ${pnl > 0 ? '+' : ''}${pnl.toFixed(2)}). Chờ chạm TP/SL...`, 'analysis');
       }
-    } else {
-        if (Date.now() - lastTradeTimeRef.current < CONFIG.COOLDOWN_MS) return;
-
-        const ema50 = calculateEMA(candles, CONFIG.EMA_PERIOD);
-        const ma200 = calculateMA(candles, CONFIG.MA_PERIOD);
-        const rsi = calculateRSI(candles, CONFIG.RSI_PERIOD);
+      return;
+    } 
+    
+    // Nhịp suy nghĩ AI (1 phút/lần) nếu chưa có lệnh
+    if (now - lastReasoningTimeRef.current >= CONFIG.REASONING_MS) {
+        lastReasoningTimeRef.current = now;
+        const trendStr = `Đồng thuận MTF: ${upCount}/4 Khung Tăng.`;
         
-        // Quét cấu trúc SMC
-        const obs = findOrderBlocks(candles, 20);
-        const fvgs = findFVGs(candles, 20);
-
-        // 1. ĐIỀU KIỆN LONG
-        const isMacroBullish = currentPrice > ema50 && ema50 > ma200;
-        const touchBullishOB = obs.bullish.some((ob: any) => currentPrice <= ob.top && currentPrice >= ob.bottom);
-        const touchBullishFVG = fvgs.bullish.some((fvg: any) => currentPrice <= fvg.top && currentPrice >= fvg.bottom);
-        const isRsiBullish = rsi >= 30 && rsi <= 50; // Quá bán hoặc đang hồi nhẹ
-
-        if (isMacroBullish && (touchBullishOB || touchBullishFVG) && isRsiBullish) {
-            isProcessingRef.current = true;
-            const setupName = touchBullishOB ? "SMC: Retest Bullish OB" : "SMC: Lấp Bullish FVG";
-            handleOpenOrder('LONG', rsi.toFixed(1), setupName);
-            return;
-        }
-
-        // 2. ĐIỀU KIỆN SHORT
-        const isMacroBearish = currentPrice < ema50 && ema50 < ma200;
-        const touchBearishOB = obs.bearish.some((ob: any) => currentPrice >= ob.bottom && currentPrice <= ob.top);
-        const touchBearishFVG = fvgs.bearish.some((fvg: any) => currentPrice >= fvg.bottom && currentPrice <= fvg.top);
-        const isRsiBearish = rsi >= 50 && rsi <= 70; // Đang hạ nhiệt từ vùng quá mua
-
-        if (isMacroBearish && (touchBearishOB || touchBearishFVG) && isRsiBearish) {
-            isProcessingRef.current = true;
-            const setupName = touchBearishOB ? "SMC: Retest Bearish OB" : "SMC: Lấp Bearish FVG";
-            handleOpenOrder('SHORT', rsi.toFixed(1), setupName);
-            return;
+        if (currentPrice > ema50 && ema50 > ma200 && upCount >= 2) {
+            if (rsi > 55) addLog(`${trendStr} Xu hướng M1 Tăng mạnh. RSI cao (${rsi.toFixed(1)}). Đang rình nhịp pullback về Bullish OB.`, 'analysis');
+            else addLog(`${trendStr} Xu hướng M1 Tăng. RSI hạ nhiệt (${rsi.toFixed(1)}). Đã sẵn sàng bắt đáy tại SMC Setup.`, 'analysis');
+        } else if (currentPrice < ema50 && ema50 < ma200 && downCount >= 2) {
+            if (rsi < 45) addLog(`${trendStr} Xu hướng M1 Giảm mạnh. RSI thấp (${rsi.toFixed(1)}). Đang rình nhịp hồi lên Bearish OB.`, 'analysis');
+            else addLog(`${trendStr} Xu hướng M1 Giảm. RSI vùng bán đẹp (${rsi.toFixed(1)}). Đã sẵn sàng Short tại SMC Setup.`, 'analysis');
+        } else {
+            addLog(`Khung thời gian đang nhiễu (Lớn/Nhỏ lệch pha). Đứng ngoài quan sát bảo toàn vốn.`, 'analysis');
         }
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentPrice, isRunning, position, candles]);
 
-  const handleOpenOrder = async (type: 'LONG' | 'SHORT', rsiVal: string, setupName: string) => {
+    // Kiểm tra Cooldown hoặc Đang bận
+    if (isProcessingRef.current || now - lastTradeTimeRef.current < CONFIG.COOLDOWN_MS) return;
+
+    // Quét cấu trúc SMC
+    const obs = findOrderBlocks(candles, 20);
+    const fvgs = findFVGs(candles, 20);
+
+    // 1. ĐIỀU KIỆN LONG KHẮT KHE
+    // M1 Tăng + Ít nhất 2/4 Khung lớn Tăng
+    const isMacroBullish = currentPrice > ema50 && ema50 > ma200 && upCount >= 2;
+    const touchBullishOB = obs.bullish.some((ob: any) => currentPrice <= ob.top && currentPrice >= ob.bottom);
+    const touchBullishFVG = fvgs.bullish.some((fvg: any) => currentPrice <= fvg.top && currentPrice >= fvg.bottom);
+    const isRsiBullish = rsi >= 30 && rsi <= 55; // Không quá mua mới Long
+
+    if (isMacroBullish && (touchBullishOB || touchBullishFVG) && isRsiBullish) {
+        isProcessingRef.current = true;
+        const setupName = touchBullishOB ? "SMC: Chạm Bullish OB" : "SMC: Lấp Bullish FVG";
+        handleOpenOrder('LONG', rsi.toFixed(1), setupName, `${upCount}/4`);
+        return;
+    }
+
+    // 2. ĐIỀU KIỆN SHORT KHẮT KHE
+    // M1 Giảm + Ít nhất 2/4 Khung lớn Giảm
+    const isMacroBearish = currentPrice < ema50 && ema50 < ma200 && downCount >= 2;
+    const touchBearishOB = obs.bearish.some((ob: any) => currentPrice >= ob.bottom && currentPrice <= ob.top);
+    const touchBearishFVG = fvgs.bearish.some((fvg: any) => currentPrice >= fvg.bottom && currentPrice <= fvg.top);
+    const isRsiBearish = rsi >= 45 && rsi <= 70; // Không quá bán mới Short
+
+    if (isMacroBearish && (touchBearishOB || touchBearishFVG) && isRsiBearish) {
+        isProcessingRef.current = true;
+        const setupName = touchBearishOB ? "SMC: Chạm Bearish OB" : "SMC: Lấp Bearish FVG";
+        handleOpenOrder('SHORT', rsi.toFixed(1), setupName, `${downCount}/4`);
+        return;
+    }
+    
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentPrice, isRunning, position, candles, mtfTrends]);
+
+  const handleOpenOrder = async (type: 'LONG' | 'SHORT', rsiVal: string, setupName: string, mtfScore: string) => {
     if (!user) { isProcessingRef.current = false; return; }
     
     const margin = account.balance;
@@ -417,14 +496,14 @@ export default function BitcoinTradingBot() {
     const tp = type === 'LONG' ? currentPrice * (1 + CONFIG.TP_PERCENT) : currentPrice * (1 - CONFIG.TP_PERCENT);
     const sl = type === 'LONG' ? currentPrice * (1 - CONFIG.SL_PERCENT) : currentPrice * (1 + CONFIG.SL_PERCENT);
 
-    const details = { type: String(type), entry: Number(currentPrice), margin: Number(margin - fee), size: Number(size), tp: Number(tp), sl: Number(sl), openFee: Number(fee), time: Date.now(), signalDetail: { rsi: String(rsiVal), setup: setupName } };
+    const details = { type: String(type), entry: Number(currentPrice), margin: Number(margin - fee), size: Number(size), tp: Number(tp), sl: Number(sl), openFee: Number(fee), time: Date.now(), signalDetail: { rsi: String(rsiVal), setup: setupName, mtf: mtfScore } };
 
     try {
       await setDoc(doc(db, 'artifacts', APP_ID, 'users', user.uid, 'account', 'data'), { balance: 0 }, { merge: true });
       await setDoc(doc(db, 'artifacts', APP_ID, 'users', user.uid, 'position', 'active'), { active: true, details });
       
       const { token, chatId } = tgConfigRef.current;
-      if (token && chatId) fetch(`https://api.telegram.org/bot${token}/sendMessage`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: chatId, text: `🚀 <b>BOT MỞ ${type}</b>\n• Giá: ${currentPrice.toLocaleString()}\n• Tín hiệu: ${setupName}\n• RSI: ${rsiVal}`, parse_mode: 'HTML' }) });
+      if (token && chatId) fetch(`https://api.telegram.org/bot${token}/sendMessage`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: chatId, text: `🚀 <b>BOT MỞ ${type}</b>\n• Giá: ${currentPrice.toLocaleString()}\n• Tín hiệu: ${setupName}\n• MTF Score: ${mtfScore}\n• RSI: ${rsiVal}`, parse_mode: 'HTML' }) });
       addLog(`VÀO ${type}: Tín hiệu ${setupName} chuẩn xác.`, 'success');
     } catch (e: any) {
       isProcessingRef.current = false;
@@ -435,7 +514,7 @@ export default function BitcoinTradingBot() {
   const handleCloseOrder = async (reason: string, pnl: number) => {
     if (!user || !position) { isProcessingRef.current = false; return; }
     
-    lastTradeTimeRef.current = Date.now(); 
+    lastTradeTimeRef.current = Date.now(); // Kích hoạt Cooldown 1 phút
     const fee = Number(position.size) * CONFIG.FEE;
     const net = Number(pnl) - fee - Number(position.openFee);
     const tradeId = Date.now().toString();
@@ -503,6 +582,7 @@ export default function BitcoinTradingBot() {
 
   return (
     <div className="min-h-screen bg-[#0b0e11] text-gray-100 font-sans p-3 md:p-6 flex flex-col gap-4">
+      {/* SETTINGS MODAL */}
       {showSettings && (
         <div className="fixed inset-0 bg-black/90 z-50 flex items-center justify-center p-4 backdrop-blur-md">
           <div className="bg-[#1e2329] p-6 rounded-3xl border border-gray-700 max-w-md w-full shadow-2xl">
@@ -527,7 +607,7 @@ export default function BitcoinTradingBot() {
         <div className="flex items-center gap-4">
           <div className="p-3 bg-purple-600 rounded-2xl text-white shadow-xl shadow-purple-900/30"><Target size={24} /></div>
           <div>
-            <h1 className="text-sm sm:text-lg font-black uppercase flex items-center gap-2">SMC EXPERT BOT <span className="text-[9px] bg-green-500/20 text-green-400 px-2 py-0.5 rounded-full animate-pulse border border-green-500/30">H.ACCURACY</span></h1>
+            <h1 className="text-sm sm:text-lg font-black uppercase flex items-center gap-2">SMC EXPERT BOT <span className="text-[9px] bg-green-500/20 text-green-400 px-2 py-0.5 rounded-full animate-pulse border border-green-500/30">MTF FILTER</span></h1>
             <div className="flex items-center gap-2 mt-1">
                <button onClick={() => setShowSettings(true)} className="text-[9px] text-gray-500 hover:text-white uppercase font-black transition-colors">Cài đặt</button>
                <div className="w-1 h-1 bg-gray-700 rounded-full"></div>
@@ -576,11 +656,18 @@ export default function BitcoinTradingBot() {
           </div>
 
           <div className="bg-[#1e2329] p-5 rounded-3xl border border-gray-800 h-[380px] flex flex-col shadow-inner relative overflow-hidden">
-             <div className="flex justify-between mb-4 items-center px-2 z-10">
-                <h3 className="text-xs font-black text-gray-400 uppercase flex items-center gap-2 tracking-widest"><BarChart2 size={16}/> M1 Smart Money Tracking</h3>
+             <div className="flex justify-between mb-4 items-center px-2 z-10 flex-wrap gap-2">
+                <h3 className="text-xs font-black text-gray-400 uppercase flex items-center gap-2 tracking-widest"><BarChart2 size={16}/> Market Feed 1m</h3>
                 <div className="flex gap-2">
-                   <div className={`bg-[#0b0e11] px-2 py-1 rounded-lg text-[8px] font-black border uppercase tracking-widest ${currentPrice > indicators.ema50 ? 'text-green-500 border-green-500/20' : 'text-red-500 border-red-500/20'}`}>EMA50: {indicators.ema50.toFixed(0)}</div>
-                   <div className={`bg-[#0b0e11] px-2 py-1 rounded-lg text-[8px] font-black border uppercase tracking-widest ${currentPrice > indicators.ma200 ? 'text-green-500 border-green-500/20' : 'text-red-500 border-red-500/20'}`}>MA200: {indicators.ma200.toFixed(0)}</div>
+                   {['15m', '1h', '4h', '1d'].map(tf => {
+                      const trend = mtfTrends[tf as keyof typeof mtfTrends];
+                      const isUp = trend === 'UP';
+                      return (
+                        <div key={tf} className={`bg-[#0b0e11] px-2 py-1 rounded-lg text-[8px] font-black uppercase tracking-widest border ${isUp ? 'text-green-500 border-green-500/20' : trend === 'DOWN' ? 'text-red-500 border-red-500/20' : 'text-gray-500 border-gray-800'}`}>
+                           {tf} {isUp ? '↑' : trend === 'DOWN' ? '↓' : '-'}
+                        </div>
+                      );
+                   })}
                 </div>
              </div>
              <div className="flex-1 w-full bg-[#0b0e11]/50 rounded-2xl border border-gray-800/30 relative p-4 group">
@@ -593,7 +680,7 @@ export default function BitcoinTradingBot() {
         <div className="lg:col-span-4 flex flex-col h-[700px]">
           <div className="bg-[#1e2329] rounded-[2.5rem] border border-gray-800 flex flex-col flex-1 overflow-hidden shadow-2xl relative">
              <div className="flex bg-[#252a30] p-1.5 m-3 rounded-3xl border border-gray-800/50 shadow-inner">
-                <button onClick={() => setActiveTab('LOGS')} className={`flex-1 py-3 text-[11px] font-black tracking-widest transition-all rounded-2xl uppercase ${activeTab === 'LOGS' ? 'bg-[#1e2329] text-blue-400 shadow-xl' : 'text-gray-500 hover:text-gray-400'}`}>Nhật ký</button>
+                <button onClick={() => setActiveTab('LOGS')} className={`flex-1 py-3 text-[11px] font-black tracking-widest transition-all rounded-2xl uppercase ${activeTab === 'LOGS' ? 'bg-[#1e2329] text-blue-400 shadow-xl' : 'text-gray-500 hover:text-gray-400'}`}>Nhật ký AI</button>
                 <button onClick={() => setActiveTab('HISTORY')} className={`flex-1 py-3 text-[11px] font-black tracking-widest transition-all rounded-2xl uppercase ${activeTab === 'HISTORY' ? 'bg-[#1e2329] text-yellow-400 shadow-xl' : 'text-gray-500 hover:text-gray-400'}`}>Lịch sử</button>
              </div>
 
@@ -602,7 +689,7 @@ export default function BitcoinTradingBot() {
                     <div className="space-y-3">
                         {logs.length === 0 && <p className="text-gray-700 text-center italic mt-10 uppercase tracking-widest">Đang kiểm tra FVG/OB...</p>}
                         {logs.map((log, i) => (
-                          <div key={i} className={`border-l-2 pl-3 py-2 leading-relaxed rounded-r-lg bg-gray-900/20 ${String(log.type) === 'success' ? 'border-green-500 text-green-300' : String(log.type) === 'danger' ? 'border-red-500 text-red-300' : 'border-gray-700 text-gray-500'}`}>
+                          <div key={i} className={`border-l-2 pl-3 py-2 leading-relaxed rounded-r-lg bg-gray-900/20 ${String(log.type) === 'success' ? 'border-green-500 text-green-300' : String(log.type) === 'danger' ? 'border-red-500 text-red-300' : String(log.type) === 'analysis' ? 'border-blue-500 text-blue-300 italic' : 'border-gray-700 text-gray-500'}`}>
                             <span className="text-[8px] text-gray-600 font-bold block mb-0.5">{String(log.time)}</span>
                             {String(log.msg)}
                           </div>
@@ -626,7 +713,7 @@ export default function BitcoinTradingBot() {
                                 </div>
                                 {t.signalDetail && (
                                   <div className="mt-3 pt-3 border-t border-gray-800 grid grid-cols-2 gap-1 text-[8px] uppercase font-black text-gray-600">
-                                     <div className="flex items-center gap-1"><Zap size={10} className="text-yellow-500"/> RSI: {String(t.signalDetail.rsi)}</div>
+                                     <div className="flex items-center gap-1"><Zap size={10} className="text-yellow-500"/> MTF: {String(t.signalDetail.mtf)}</div>
                                      <div className="text-right truncate text-blue-400">{String(t.signalDetail.setup)}</div>
                                   </div>
                                 )}
