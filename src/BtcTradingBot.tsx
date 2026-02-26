@@ -141,7 +141,7 @@ export default function BitcoinTradingBot() {
   useEffect(() => { logsEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [logs, activeTab]);
   useEffect(() => { candlesRef.current = candles; }, [candles]); // Added
   useEffect(() => { sentimentRef.current = sentiment; }, [sentiment]); // Added
-  useEffect(() => { isTradingActive.current = isRunning; }, [isRunning]); // Added
+  useEffect(() => { isTradingActive.current = isRunning && !runtimeOnline; }, [isRunning, runtimeOnline]); // Added
 
   // Auth Init
   useEffect(() => {
@@ -287,7 +287,7 @@ export default function BitcoinTradingBot() {
 
   // Telegram Heartbeat
   useEffect(() => {
-    if (!isRunning || !user) return;
+    if (!isRunning || !user || runtimeOnline) return;
     sendTelegram(`🟢 <b>HỆ THỐNG ĐÃ KHỞI ĐỘNG</b>\n• Cặp: BTCUSDT\n• Chu kỳ báo cáo: 10 phút/lần`);
 
     const heartbeat = setInterval(() => {
@@ -301,7 +301,7 @@ export default function BitcoinTradingBot() {
       clearInterval(heartbeat);
       sendTelegram(`🔴 <b>HỆ THỐNG ĐÃ DỪNG</b>\n• Bot đã ngừng quét thị trường.`);
     };
-  }, [isRunning, user]);
+  }, [isRunning, user, runtimeOnline]);
 
   useEffect(() => {
     const syncInitialRuntime = async () => {
@@ -320,7 +320,50 @@ export default function BitcoinTradingBot() {
   }, []);
 
   useEffect(() => {
-    if (!isRunning) {
+    if (!runtimeOnline) return;
+
+    const pullRuntimeState = async () => {
+      try {
+        const response = await fetch('/api/runtime');
+        if (!response.ok) return;
+        const data = await response.json();
+
+        if (typeof data.isRunning === 'boolean') setIsRunning(data.isRunning);
+        if (typeof data.balance === 'number' || typeof data.pnlHistory === 'number') {
+          setAccount((prev) => ({
+            balance: typeof data.balance === 'number' ? data.balance : prev.balance,
+            pnlHistory: typeof data.pnlHistory === 'number' ? data.pnlHistory : prev.pnlHistory,
+          }));
+        }
+
+        if (data.position && typeof data.position === 'object') {
+          setPosition({
+            type: data.position.type,
+            entryPrice: Number(data.position.entryPrice || 0),
+            margin: Number(data.position.margin || 0),
+            size: Number(data.position.size || 0),
+            tpPrice: Number(data.position.tpPrice || 0),
+            slPrice: Number(data.position.slPrice || 0),
+            liquidationPrice: Number(data.position.liquidationPrice || 0),
+            openFee: Number(data.position.openFee || 0),
+            openTime: Number(data.position.openTime || Date.now()),
+            signalDetail: data.position.signalDetail || null,
+          });
+        } else {
+          setPosition(null);
+        }
+      } catch (error) {
+        // ignore polling errors while backend warms up
+      }
+    };
+
+    pullRuntimeState();
+    const runtimePoll = setInterval(pullRuntimeState, 5000);
+    return () => clearInterval(runtimePoll);
+  }, [runtimeOnline]);
+
+  useEffect(() => {
+    if (!isRunning || runtimeOnline) {
       drawdownAlertSentRef.current = false;
       return;
     }
@@ -339,10 +382,10 @@ export default function BitcoinTradingBot() {
     if (drawdownPercent < CONFIG.ALERT_DRAWDOWN_PERCENT * 0.7) {
       drawdownAlertSentRef.current = false;
     }
-  }, [isRunning, account.balance, position, currentPrice]);
+  }, [isRunning, runtimeOnline, account.balance, position, currentPrice]);
 
   useEffect(() => {
-    if (!isRunning) return;
+    if (!isRunning || runtimeOnline) return;
 
     const sendDailySummary = () => {
       const now = Date.now();
@@ -362,7 +405,7 @@ export default function BitcoinTradingBot() {
     sendDailySummary();
     const summaryTimer = setInterval(sendDailySummary, 60 * 1000);
     return () => clearInterval(summaryTimer);
-  }, [isRunning, history, account.pnlHistory, account.balance]);
+  }, [isRunning, runtimeOnline, history, account.pnlHistory, account.balance]);
 
   const fetchMTFData = async () => {
     try {
@@ -390,12 +433,12 @@ export default function BitcoinTradingBot() {
   };
 
   useEffect(() => {
-    if (isRunning) {
+    if (isRunning && !runtimeOnline) {
       fetchMTFData();
       const interval = setInterval(fetchMTFData, 60000); // 1 minute sync
       return () => clearInterval(interval);
     }
-  }, [isRunning]);
+  }, [isRunning, runtimeOnline]);
 
   const processAndSetData = (newCandles: Candle[]) => {
     setCandles(newCandles);
