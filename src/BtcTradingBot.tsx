@@ -34,6 +34,151 @@ type BacktestSuggestion = {
   text: string
 };
 
+type TrendBias = 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+type TradeSide = 'LONG' | 'SHORT';
+type SMCOrderBlock = { low: number; high: number; midpoint: number };
+type PendingSetup = {
+  side: TradeSide;
+  entryPrice: number;
+  slPrice: number;
+  tpPrice: number;
+  rr: number;
+  createdAt: number;
+};
+
+const RISK_PER_TRADE = 0.01;
+const DAILY_LOSS_LIMIT = 0.03;
+const RR_TARGET = 3;
+const ATR_PERIOD = 14;
+const HTF_MINUTES = 240;
+const LTF_MINUTES = 15;
+const SWEEP_LOOKBACK = 20;
+const BOS_LOOKBACK = 8;
+const EQUAL_TOLERANCE_BPS = 0.0008;
+
+const aggregateCandles = (candles: Candle[], intervalMinutes: number): Candle[] => {
+  if (!candles.length) return [];
+  const bucketMs = intervalMinutes * 60 * 1000;
+  const buckets = new Map<number, Candle[]>();
+
+  candles.forEach((candle) => {
+    const bucket = Math.floor(candle.time / bucketMs) * bucketMs;
+    const items = buckets.get(bucket) || [];
+    items.push(candle);
+    buckets.set(bucket, items);
+  });
+
+  return [...buckets.entries()].sort((a, b) => a[0] - b[0]).map(([time, items]) => {
+    const open = items[0].open;
+    const close = items[items.length - 1].close;
+    return {
+      time,
+      open,
+      close,
+      high: Math.max(...items.map((c) => c.high)),
+      low: Math.min(...items.map((c) => c.low)),
+      volume: items.reduce((sum, c) => sum + c.volume, 0),
+      isGreen: close >= open,
+    };
+  });
+};
+
+const calculateEMA = (values: number[], period: number): number[] => {
+  if (!values.length) return [];
+  const alpha = 2 / (period + 1);
+  const ema = [values[0]];
+  for (let i = 1; i < values.length; i++) ema.push(values[i] * alpha + ema[i - 1] * (1 - alpha));
+  return ema;
+};
+
+const calculateATR = (candles: Candle[], period: number): number[] => {
+  if (!candles.length) return [];
+  const tr = [candles[0].high - candles[0].low];
+  for (let i = 1; i < candles.length; i++) {
+    const c = candles[i];
+    const prevClose = candles[i - 1].close;
+    tr.push(Math.max(c.high - c.low, Math.abs(c.high - prevClose), Math.abs(c.low - prevClose)));
+  }
+  const atr: number[] = [];
+  for (let i = 0; i < tr.length; i++) {
+    if (i < period - 1) atr.push(tr[i]);
+    else if (i === period - 1) atr.push(tr.slice(0, period).reduce((a, b) => a + b, 0) / period);
+    else atr.push((atr[i - 1] * (period - 1) + tr[i]) / period);
+  }
+  return atr;
+};
+
+const getHtfTrendBias = (candles: Candle[]): TrendBias => {
+  if (candles.length < 4) return 'NEUTRAL';
+  const closes = candles.map((c) => c.close);
+  const ema200 = calculateEMA(closes, 200);
+  const last = candles[candles.length - 1];
+  const prev1 = candles[candles.length - 2];
+  const prev2 = candles[candles.length - 3];
+
+  const bullishStructure = last.high > prev1.high && prev1.high > prev2.high && last.low > prev1.low;
+  const bearishStructure = last.low < prev1.low && prev1.low < prev2.low && last.high < prev1.high;
+
+  const lastEma = ema200[ema200.length - 1] ?? last.close;
+  if (bullishStructure || last.close > lastEma) return 'BULLISH';
+  if (bearishStructure || last.close < lastEma) return 'BEARISH';
+  return 'NEUTRAL';
+};
+
+const getLiquiditySweep = (candles: Candle[], index: number, atr: number): { side: TradeSide } | null => {
+  if (index < SWEEP_LOOKBACK) return null;
+  const current = candles[index];
+  const lookback = candles.slice(index - SWEEP_LOOKBACK, index);
+  const highPool = Math.max(...lookback.map((c) => c.high));
+  const lowPool = Math.min(...lookback.map((c) => c.low));
+  const tolerance = Math.max(atr * 0.2, current.close * EQUAL_TOLERANCE_BPS);
+
+  const equalHighCount = lookback.filter((c) => Math.abs(c.high - highPool) <= tolerance).length;
+  if (equalHighCount >= 2 && current.high > highPool + tolerance && current.close < highPool) return { side: 'SHORT' };
+
+  const equalLowCount = lookback.filter((c) => Math.abs(c.low - lowPool) <= tolerance).length;
+  if (equalLowCount >= 2 && current.low < lowPool - tolerance && current.close > lowPool) return { side: 'LONG' };
+
+  return null;
+};
+
+const findOrderBlock = (candles: Candle[], index: number, side: TradeSide): SMCOrderBlock | null => {
+  if (index < BOS_LOOKBACK + 2) return null;
+  const current = candles[index];
+  const recent = candles.slice(index - BOS_LOOKBACK, index);
+
+  if (side === 'LONG') {
+    const swingHigh = Math.max(...recent.map((c) => c.high));
+    if (current.close <= swingHigh) return null;
+    for (let i = index - 1; i >= index - BOS_LOOKBACK; i--) {
+      const c = candles[i];
+      if (c.close < c.open) {
+        const low = Math.min(c.open, c.close);
+        const high = Math.max(c.open, c.close);
+        return { low, high, midpoint: (low + high) / 2 };
+      }
+    }
+  }
+
+  const swingLow = Math.min(...recent.map((c) => c.low));
+  if (current.close >= swingLow) return null;
+  for (let i = index - 1; i >= index - BOS_LOOKBACK; i--) {
+    const c = candles[i];
+    if (c.close > c.open) {
+      const low = Math.min(c.open, c.close);
+      const high = Math.max(c.open, c.close);
+      return { low, high, midpoint: (low + high) / 2 };
+    }
+  }
+
+  return null;
+};
+
+const isAllowedTradingHourUtc = (timestampMs: number): boolean => {
+  const hour = new Date(timestampMs).getUTCHours();
+  return (hour >= 13 && hour < 17) || (hour >= 20 && hour < 24);
+};
+
 const getBacktestSuggestions = (result: BacktestResult): BacktestSuggestion[] => {
   const suggestions: BacktestSuggestion[] = [];
 
@@ -132,6 +277,8 @@ export default function BitcoinTradingBot() {
   const isTradingActive = useRef(isRunning); // Added for processAndSetData
   const drawdownAlertSentRef = useRef(false);
   const lastDailySummaryRef = useRef(0);
+  const pendingSetupRef = useRef<PendingSetup | null>(null);
+  const dayTrackerRef = useRef<{ dayKey: string; startBalance: number; realizedPnl: number }>({ dayKey: '', startBalance: 0, realizedPnl: 0 });
 
   // Sync refs
   useEffect(() => { tgConfigRef.current = tgConfig; }, [tgConfig]);
@@ -475,7 +622,7 @@ export default function BitcoinTradingBot() {
     setAnalysis(newAnalysis);
     setSentiment(prev => ({ ...prev, '1m': trend === 'UP' ? 'BULLISH' : 'BEARISH' }));
 
-    // --- TRADING LOGIC WITH MTF & VOLUME FILTERS ---
+    // --- LIVE TRADING LOGIC (SMC SPEC) ---
     if (!isTradingActive.current || !user) return;
 
     const now = Date.now();
@@ -485,17 +632,19 @@ export default function BitcoinTradingBot() {
       if (isProcessingRef.current) return;
 
       const isL = String(positionRef.current.type) === 'LONG';
-      const pnl = isL ? (close - positionRef.current.entryPrice) * (positionRef.current.size / positionRef.current.entryPrice) : (positionRef.current.entryPrice - close) * (positionRef.current.size / positionRef.current.entryPrice);
+      const pnl = isL
+        ? (close - positionRef.current.entryPrice) * (positionRef.current.size / positionRef.current.entryPrice)
+        : (positionRef.current.entryPrice - close) * (positionRef.current.size / positionRef.current.entryPrice);
 
-      let r = '';
-      if ((isL && close >= positionRef.current.tpPrice) || (!isL && close <= positionRef.current.tpPrice)) r = 'TAKE PROFIT';
-      if ((isL && close <= positionRef.current.slPrice) || (!isL && close >= positionRef.current.slPrice)) r = 'STOP LOSS';
+      let reason = '';
+      if ((isL && close >= positionRef.current.tpPrice) || (!isL && close <= positionRef.current.tpPrice)) reason = 'TAKE PROFIT';
+      if ((isL && close <= positionRef.current.slPrice) || (!isL && close >= positionRef.current.slPrice)) reason = 'STOP LOSS';
 
-      if (r) {
+      if (reason) {
         isProcessingRef.current = true;
-        handleCloseOrder(r, pnl);
+        handleCloseOrder(reason, pnl);
       } else if (shouldLogAnalysis) {
-        addLog(`Đang nắm giữ ${positionRef.current.type} (PnL Ròng: ${pnl > 0 ? '+' : ''}${pnl.toFixed(2)} USDT). AI giám sát điểm thanh lý...`, 'analysis');
+        addLog(`Đang nắm giữ ${positionRef.current.type} (PnL Ròng: ${pnl > 0 ? '+' : ''}${pnl.toFixed(2)} USDT).`, 'analysis');
         lastAnalysisLogTime.current = now;
       }
       return;
@@ -504,62 +653,119 @@ export default function BitcoinTradingBot() {
     if (isProcessingRef.current || now - lastTradeTimeRef.current < CONFIG.COOLDOWN_MS) return;
     if (latestAccountRef.current.balance < 10) return;
 
-    // 1. Volume Filter: Bỏ qua nếu thanh nến hiện tại có Vol thấp hơn trung bình 20 phiên
-    const lastVolume = lastCandle.volume;
-    if (lastVolume < volSma * CONFIG.VOL_MULTIPLIER) {
-      if (shouldLogAnalysis) addLog(`Bỏ qua lệnh: Khối lượng (${lastVolume.toFixed(2)}) thấp hơn mức trung bình (${volSma.toFixed(2)}).`, 'info');
-      lastAnalysisLogTime.current = now;
-      return;
+    const dayKey = new Date(lastCandle.time).toISOString().slice(0, 10);
+    if (dayTrackerRef.current.dayKey !== dayKey) {
+      dayTrackerRef.current = { dayKey, startBalance: latestAccountRef.current.balance, realizedPnl: 0 };
     }
 
-    // 2. MTF Alignment: Xu hướng 1m phải đồng thuận với 5m và 15m
-    const trend5m = sentimentRef.current['5m'];
-    const trend15m = sentimentRef.current['15m'];
-    const currentTrend = newAnalysis.trend === 'UP' ? 'BULLISH' : 'BEARISH';
-
-    if (trend5m !== currentTrend || trend15m !== currentTrend) {
-      if (shouldLogAnalysis) addLog(`Bỏ qua lệnh: MTF không đồng thuận (1m: ${currentTrend}, 5m: ${trend5m}, 15m: ${trend15m}).`, 'info');
-      lastAnalysisLogTime.current = now;
-      return;
-    }
-
-    // Lọc độ mạnh của tín hiệu RSI (Mean Reversion / Pullback)
-    let signalType: 'LONG' | 'SHORT' | null = null;
-    const rsiThreshold = CONFIG.RSI_OVERBOUGHT_OVERSOLD;
-
-    if (newAnalysis.score >= CONFIG.CONFLUENCE_THRESHOLD) {
-      // Strong Buy Signal
-      if (newAnalysis.rsi < rsiThreshold.oversold) {
-        signalType = 'LONG'; // Oversold, potential bounce
-      } else if (newAnalysis.rsi > rsiThreshold.neutral_low && newAnalysis.rsi < rsiThreshold.neutral_high) {
-        signalType = 'LONG'; // Neutral, but strong SMC
+    if (
+      dayTrackerRef.current.startBalance > 0
+      && dayTrackerRef.current.realizedPnl < 0
+      && Math.abs(dayTrackerRef.current.realizedPnl) / dayTrackerRef.current.startBalance >= DAILY_LOSS_LIMIT
+    ) {
+      pendingSetupRef.current = null;
+      if (shouldLogAnalysis) {
+        addLog('Dừng giao dịch: chạm giới hạn lỗ ngày -3%.', 'warning');
+        lastAnalysisLogTime.current = now;
       }
-    } else if (newAnalysis.score <= -CONFIG.CONFLUENCE_THRESHOLD) {
-      // Strong Sell Signal
-      if (newAnalysis.rsi > rsiThreshold.overbought) {
-        signalType = 'SHORT'; // Overbought, potential drop
-      } else if (newAnalysis.rsi > rsiThreshold.neutral_low && newAnalysis.rsi < rsiThreshold.neutral_high) {
-        signalType = 'SHORT'; // Neutral, but strong SMC
-      }
-    }
-
-    if (signalType) {
-      isProcessingRef.current = true;
-      handleOpenOrder(signalType, close, 50, newAnalysis);
-      lastAnalysisLogTime.current = now;
       return;
     }
 
+    const ltfCandles = aggregateCandles(newCandles, LTF_MINUTES);
+    const htfCandles = aggregateCandles(newCandles, HTF_MINUTES);
+
+    if (ltfCandles.length < Math.max(ATR_PERIOD + 2, SWEEP_LOOKBACK + 1, BOS_LOOKBACK + 2) || htfCandles.length < 4) {
+      return;
+    }
+
+    const ltfIndex = ltfCandles.length - 1;
+    const ltfLast = ltfCandles[ltfIndex];
+
+    if (pendingSetupRef.current) {
+      const setup = pendingSetupRef.current;
+      const touchedEntry = ltfLast.low <= setup.entryPrice && ltfLast.high >= setup.entryPrice;
+      if (touchedEntry) {
+        isProcessingRef.current = true;
+        handleOpenOrder(setup.side, setup.entryPrice, setup.slPrice, setup.tpPrice, {
+          setup: 'SMC OB Retest',
+          rr: setup.rr,
+          trend: getHtfTrendBias(htfCandles),
+        });
+        pendingSetupRef.current = null;
+        lastAnalysisLogTime.current = now;
+      }
+      return;
+    }
+
+    if (!isAllowedTradingHourUtc(ltfLast.time)) {
+      if (shouldLogAnalysis) {
+        addLog('Bỏ qua setup: ngoài khung giờ giao dịch UTC.', 'info');
+        lastAnalysisLogTime.current = now;
+      }
+      return;
+    }
+
+    const ltfAtrSeries = calculateATR(ltfCandles, ATR_PERIOD);
+    const currentAtr = ltfAtrSeries[ltfIndex];
+    if (!currentAtr || currentAtr <= 0) return;
+
+    const ltfVolumeSma = calculateSMA(ltfCandles.map((c) => c.volume), 20);
+    if (!ltfVolumeSma || ltfLast.volume <= ltfVolumeSma * 1.2) {
+      if (shouldLogAnalysis) {
+        addLog(`Bỏ qua setup: Volume thấp (${ltfLast.volume.toFixed(2)} <= ${(ltfVolumeSma * 1.2).toFixed(2)}).`, 'info');
+        lastAnalysisLogTime.current = now;
+      }
+      return;
+    }
+
+    const trendBias = getHtfTrendBias(htfCandles);
+    if (trendBias === 'NEUTRAL') {
+      if (shouldLogAnalysis) {
+        addLog('Bỏ qua setup: HTF chưa xác nhận xu hướng.', 'info');
+        lastAnalysisLogTime.current = now;
+      }
+      return;
+    }
+
+    const sweep = getLiquiditySweep(ltfCandles, ltfIndex, currentAtr);
+    if (!sweep) {
+      if (shouldLogAnalysis) {
+        addLog('Bỏ qua setup: chưa có liquidity sweep hợp lệ.', 'analysis');
+        lastAnalysisLogTime.current = now;
+      }
+      return;
+    }
+
+    const side: TradeSide = trendBias === 'BULLISH' ? 'LONG' : 'SHORT';
+    if (sweep.side !== side) {
+      if (shouldLogAnalysis) {
+        addLog(`Bỏ qua setup: sweep ${sweep.side} ngược bias ${side}.`, 'info');
+        lastAnalysisLogTime.current = now;
+      }
+      return;
+    }
+
+    const obZone = findOrderBlock(ltfCandles, ltfIndex, side);
+    if (!obZone) {
+      if (shouldLogAnalysis) {
+        addLog('Bỏ qua setup: không tìm thấy Order Block hợp lệ sau BOS.', 'analysis');
+        lastAnalysisLogTime.current = now;
+      }
+      return;
+    }
+
+    const entryPrice = obZone.midpoint;
+    const slPrice = side === 'LONG' ? obZone.low - currentAtr * 0.5 : obZone.high + currentAtr * 0.5;
+    const risk = Math.abs(entryPrice - slPrice);
+    if (risk <= 0) return;
+
+    const tpPrice = side === 'LONG' ? entryPrice + risk * RR_TARGET : entryPrice - risk * RR_TARGET;
+    const rr = Math.abs(tpPrice - entryPrice) / risk;
+    if (rr < RR_TARGET) return;
+
+    pendingSetupRef.current = { side, entryPrice, slPrice, tpPrice, rr, createdAt: now };
     if (shouldLogAnalysis) {
-      let thought = `Quét đa tín hiệu [Điểm: ${newAnalysis.score > 0 ? '+' + newAnalysis.score : newAnalysis.score}/5]. `;
-      if (lastVolume < volSma * CONFIG.VOL_MULTIPLIER) thought += `Thanh khoản thấp (${(lastVolume / (volSma || 1)).toFixed(1)}x tb). `;
-      if (trend5m !== currentTrend || trend15m !== currentTrend) thought += `MTF không đồng thuận. `;
-
-      if (newAnalysis.score === 0) thought += `Thị trường Sideway/Nhiễu. Tạm dừng giao dịch.`;
-      else if (newAnalysis.score > 0 && newAnalysis.score < CONFIG.CONFLUENCE_THRESHOLD) thought += `Phe Mua đang gom hàng (FVG/OB) nhưng xung lực chưa đủ. Rình mồi LONG...`;
-      else if (newAnalysis.score < 0 && newAnalysis.score > -CONFIG.CONFLUENCE_THRESHOLD) thought += `Phe Bán đang áp đảo. Áp lực MACD yếu. Rình mồi SHORT...`;
-
-      addLog(`AI Radar: ${thought}`, 'analysis');
+      addLog(`Setup ${side} hợp lệ: chờ giá hồi về OB (${entryPrice.toFixed(2)}), RR ${rr.toFixed(2)}.`, 'success');
       lastAnalysisLogTime.current = now;
     }
   };
@@ -603,35 +809,58 @@ export default function BitcoinTradingBot() {
     return () => ws?.close();
   }, []);
 
-  const handleOpenOrder = async (type: 'LONG' | 'SHORT', price: number, margin: number, a: Analysis) => {
-    const size = margin * CONFIG.LEVERAGE;
-    const fee = size * CONFIG.FEE;
-    const realMargin = margin - fee;
-
-    let tp, sl, liq;
-    if (type === 'LONG') {
-      tp = price * (1 + CONFIG.TP_PERCENT);
-      sl = price * (1 - CONFIG.SL_PERCENT);
-      liq = price * (1 - 1 / CONFIG.LEVERAGE);
-    } else {
-      tp = price * (1 - CONFIG.TP_PERCENT);
-      sl = price * (1 + CONFIG.SL_PERCENT);
-      liq = price * (1 + 1 / CONFIG.LEVERAGE);
+  const handleOpenOrder = async (
+    type: 'LONG' | 'SHORT',
+    entryPrice: number,
+    slPrice: number,
+    tpPrice: number,
+    meta: { setup: string; rr: number; trend: TrendBias }
+  ) => {
+    const riskCapital = latestAccountRef.current.balance * RISK_PER_TRADE;
+    const slDistance = Math.abs(entryPrice - slPrice);
+    if (!slDistance) {
+      isProcessingRef.current = false;
+      return;
     }
 
-    const setupName = a.score >= CONFIG.CONFLUENCE_THRESHOLD ? "SMC Strong Buy" : "SMC Strong Sell";
+    const size = riskCapital / slDistance;
+    const notional = entryPrice * size;
+    const fee = notional * CONFIG.FEE;
+    const margin = Math.max(notional / CONFIG.LEVERAGE, riskCapital + fee);
+    const realMargin = margin - fee;
+
+    const liq = type === 'LONG'
+      ? entryPrice * (1 - 1 / CONFIG.LEVERAGE)
+      : entryPrice * (1 + 1 / CONFIG.LEVERAGE);
+
     const details = {
-      type, entryPrice: price, margin: realMargin, size,
-      tpPrice: tp, slPrice: sl, liquidationPrice: liq,
-      openFee: fee, openTime: Date.now(),
-      signalDetail: { rsi: a.rsi.toFixed(1), setup: setupName, score: a.score }
+      type,
+      entryPrice,
+      margin: realMargin,
+      size: notional,
+      tpPrice,
+      slPrice,
+      liquidationPrice: liq,
+      openFee: fee,
+      openTime: Date.now(),
+      signalDetail: {
+        setup: meta.setup,
+        rr: meta.rr.toFixed(2),
+        trend: meta.trend,
+        riskPercent: `${(RISK_PER_TRADE * 100).toFixed(1)}%`,
+      }
     };
 
     try {
       await setDoc(doc(db, 'artifacts', APP_ID, 'users', user!.uid, 'account', 'data'), { balance: latestAccountRef.current.balance - margin }, { merge: true });
       await setDoc(doc(db, 'artifacts', APP_ID, 'users', user!.uid, 'position', 'active'), { active: true, details });
-      sendTelegram(`🚀 <b>BOT MỞ ${type}</b>\n• Giá: ${price.toLocaleString()}\n• Điểm SMC: ${a.score}/5\n• RSI: ${a.rsi.toFixed(1)}`);
-      addLog(`VÀO ${type}: Tín hiệu ${setupName} chuẩn xác. SMC Score: ${a.score}`, 'success');
+      sendTelegram(`🚀 <b>BOT MỞ ${type}</b>
+• Entry: ${entryPrice.toLocaleString()}
+• SL: ${slPrice.toLocaleString()}
+• TP: ${tpPrice.toLocaleString()}
+• RR: ${meta.rr.toFixed(2)}
+• Risk: ${(RISK_PER_TRADE * 100).toFixed(1)}%`);
+      addLog(`VÀO ${type}: ${meta.setup} | Entry ${entryPrice.toFixed(2)} | RR ${meta.rr.toFixed(2)}`, 'success');
       lastAnalysisLogTime.current = Date.now();
     } catch (e: any) {
       addLog(`Lỗi mở lệnh: ${e.message}`, 'danger');
@@ -656,6 +885,8 @@ export default function BitcoinTradingBot() {
         balance: account.balance + position.margin + (pnl - fee), pnlHistory: account.pnlHistory + finalPnl
       }, { merge: true });
       await setDoc(doc(db, 'artifacts', APP_ID, 'users', user.uid, 'position', 'active'), { active: false });
+
+      dayTrackerRef.current.realizedPnl += finalPnl;
 
       const icon = finalPnl > 0 ? '✅' : '❌';
       sendTelegram(`${icon} <b>ĐÓNG ${position.type}</b>\n• PnL: <b>${finalPnl > 0 ? '+' : ''}${finalPnl.toFixed(2)} USDT</b>\n• Lý do: ${reason}`);
