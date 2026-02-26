@@ -29,7 +29,7 @@ export default function DailyAggregation({ history }: DailyAggregationProps) {
         <div className="space-y-3">
             {dailyStats.length === 0 && <div className="text-center text-gray-700 text-[10px] py-10 uppercase tracking-widest font-bold">Chưa có dữ liệu theo ngày.</div>}
             {dailyStats.map((stat) => (
-                <div key={stat.date} className="bg-slate-100 p-3 sm:p-4 rounded-xl border border-slate-300 flex justify-between items-center transition-hover hover:bg-slate-200">
+                <div key={stat.date} className="bg-slate-900 p-3 sm:p-4 rounded-xl border border-slate-700 flex justify-between items-center transition-hover hover:bg-slate-800">
                     <div>
                         <div className="text-[10px] sm:text-xs font-black uppercase text-blue-400">{stat.date}</div>
                         <div className="text-[8px] sm:text-[9px] text-gray-500 font-bold mt-1 uppercase tracking-widest">

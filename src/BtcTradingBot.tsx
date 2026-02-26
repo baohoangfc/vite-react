@@ -413,22 +413,22 @@ export default function BitcoinTradingBot() {
   const winTrades = history.filter(t => t.pnl > 0).length;
   const winRate = history.length > 0 ? ((winTrades / history.length) * 100).toFixed(1) : 0;
 
-  if (loadingAuth) return <div className="min-h-screen bg-slate-100 flex items-center justify-center"><Activity className="animate-spin text-blue-500" size={48} /></div>;
+  if (loadingAuth) return <div className="min-h-screen bg-slate-900 flex items-center justify-center"><Activity className="animate-spin text-blue-500" size={48} /></div>;
   if (!user) return <AuthScreen />;
 
   return (
-    <div className="min-h-screen bg-slate-100 text-slate-800 font-sans p-4 md:p-6 selection:bg-blue-500/20">
+    <div className="min-h-screen bg-slate-900 text-slate-100 font-sans p-4 md:p-6 selection:bg-blue-500/20">
 
       {showSettings && (
         <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
-          <div className="bg-slate-200 p-6 rounded-3xl border border-slate-200 max-w-md w-full shadow-2xl">
+          <div className="bg-slate-800 p-6 rounded-3xl border border-slate-700 max-w-md w-full shadow-2xl">
             <h2 className="text-xl font-black mb-4 flex items-center gap-2 uppercase tracking-tighter text-blue-400"><Settings size={20} /> Cấu hình Telegram</h2>
             <div className="space-y-4">
-              <input value={tgConfig.token} onChange={e => setTgConfig({ ...tgConfig, token: e.target.value })} className="w-full bg-slate-100 border border-slate-300 rounded-xl p-3 text-sm text-slate-800 focus:border-blue-500 outline-none" placeholder="Bot Token Telegram" />
-              <input value={tgConfig.chatId} onChange={e => setTgConfig({ ...tgConfig, chatId: e.target.value })} className="w-full bg-slate-100 border border-slate-300 rounded-xl p-3 text-sm text-slate-800 focus:border-blue-500 outline-none" placeholder="Chat ID" />
+              <input value={tgConfig.token} onChange={e => setTgConfig({ ...tgConfig, token: e.target.value })} className="w-full bg-slate-900 border border-slate-700 rounded-xl p-3 text-sm text-slate-100 focus:border-blue-500 outline-none" placeholder="Bot Token Telegram" />
+              <input value={tgConfig.chatId} onChange={e => setTgConfig({ ...tgConfig, chatId: e.target.value })} className="w-full bg-slate-900 border border-slate-700 rounded-xl p-3 text-sm text-slate-100 focus:border-blue-500 outline-none" placeholder="Chat ID" />
             </div>
             <div className="mt-6 flex gap-3">
-              <button onClick={() => setShowSettings(false)} className="flex-1 py-3 text-slate-500 font-bold hover:text-slate-800 transition-colors">HỦY</button>
+              <button onClick={() => setShowSettings(false)} className="flex-1 py-3 text-slate-400 font-bold hover:text-slate-100 transition-colors">HỦY</button>
               <button onClick={async () => {
                 await setDoc(doc(db, 'artifacts', APP_ID, 'users', user.uid, 'account', 'data'), { tgToken: tgConfig.token, tgChatId: tgConfig.chatId }, { merge: true });
                 setShowSettings(false); addLog("Đã lưu cấu hình Telegram lên Cloud.", "success");
@@ -439,7 +439,7 @@ export default function BitcoinTradingBot() {
       )}
 
       <div className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        <div className="lg:col-span-12 flex flex-col md:flex-row justify-between items-center bg-slate-200 p-5 rounded-2xl shadow-lg border border-slate-200 relative overflow-hidden">
+        <div className="lg:col-span-12 flex flex-col md:flex-row justify-between items-center bg-slate-800 p-5 rounded-2xl shadow-lg border border-slate-700 relative overflow-hidden">
           <div className="absolute top-0 left-0 w-full h-[2px] bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500 opacity-50"></div>
           <div className="flex flex-col sm:flex-row items-center gap-4 z-10 w-full sm:w-auto text-center sm:text-left">
             <div className="p-3 bg-gradient-to-br from-blue-600 to-purple-600 rounded-xl text-white shadow-lg shadow-blue-500/30"><Crosshair size={24} /></div>
@@ -448,17 +448,17 @@ export default function BitcoinTradingBot() {
                 NEXUS AI TRADER
                 <SentimentIndicators sentiment={sentiment} />
               </h1>
-              <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2 sm:gap-3 text-[10px] sm:text-[11px] text-slate-500 mt-2 sm:mt-1 font-medium">
+              <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2 sm:gap-3 text-[10px] sm:text-[11px] text-slate-400 mt-2 sm:mt-1 font-medium">
                 <span className="flex items-center gap-1"><Layers size={12} /> SMC Engine</span>
-                <span className="border-l border-slate-300 pl-2 sm:pl-3 text-blue-500 font-bold tracking-widest uppercase">LEV x{CONFIG.LEVERAGE}</span>
-                <button onClick={() => setShowSettings(true)} className="ml-0 sm:ml-2 hover:text-slate-800 transition-colors underline decoration-slate-300 underline-offset-2">Telegram</button>
+                <span className="border-l border-slate-700 pl-2 sm:pl-3 text-blue-500 font-bold tracking-widest uppercase">LEV x{CONFIG.LEVERAGE}</span>
+                <button onClick={() => setShowSettings(true)} className="ml-0 sm:ml-2 hover:text-slate-100 transition-colors underline decoration-slate-300 underline-offset-2">Telegram</button>
                 <button onClick={() => signOut(auth)} className="text-red-400 hover:text-red-300 transition-colors ml-0 sm:ml-2">Đăng xuất</button>
               </div>
             </div>
           </div>
-          <div className="flex flex-col sm:flex-row items-center gap-4 sm:gap-6 mt-6 md:mt-0 z-10 w-full sm:w-auto pt-4 md:pt-0 border-t md:border-t-0 border-slate-200 md:border-none">
+          <div className="flex flex-col sm:flex-row items-center gap-4 sm:gap-6 mt-6 md:mt-0 z-10 w-full sm:w-auto pt-4 md:pt-0 border-t md:border-t-0 border-slate-700 md:border-none">
             <div className="text-center sm:text-right">
-              <p className="text-[10px] text-slate-500 font-bold tracking-widest uppercase mb-1">BTC/USDT M1</p>
+              <p className="text-[10px] text-slate-400 font-bold tracking-widest uppercase mb-1">BTC/USDT M1</p>
               <p className={`text-2xl sm:text-3xl font-mono font-black tracking-tighter ${candles.length > 0 && currentPrice >= candles[candles.length - 1].open ? 'text-[#0ecb81] drop-shadow-[0_0_8px_#0ecb8140]' : 'text-[#f6465d] drop-shadow-[0_0_8px_#f6465d40]'}`}>{currentPrice.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
             </div>
             <button onClick={() => setIsRunning(!isRunning)} className={`flex items-center justify-center gap-2 w-full sm:w-36 py-3.5 rounded-xl font-black uppercase tracking-widest transition-all shadow-lg active:scale-95 border ${isRunning ? 'bg-red-500/10 text-red-500 border-red-500/30 hover:bg-red-500/20' : 'bg-green-500 text-[#05070a] border-green-400 hover:bg-green-400 shadow-green-500/20'}`}>
@@ -476,27 +476,27 @@ export default function BitcoinTradingBot() {
           <BarChart candles={candles} position={position} />
           <div className="grid grid-cols-1 md:grid-cols-2 gap-5 flex-1">
             <ActivePosition position={position} currentPrice={currentPrice} unrealizedPnl={unrealizedPnl} unrealizedRoe={unrealizedRoe} onCloseOrder={handleCloseOrder} />
-            <div className="bg-slate-200 rounded-2xl border border-slate-200 flex flex-col overflow-hidden shadow-lg">
-              <div className="flex bg-slate-100 border-b border-slate-200 p-1">
-                <button onClick={() => setActiveTab('LOGS')} className={`flex-1 py-2.5 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all flex items-center justify-center gap-1.5 ${activeTab === 'LOGS' ? 'bg-slate-200 text-blue-600 shadow-sm border border-slate-300' : 'text-slate-500 hover:text-slate-700'}`}><Terminal size={12} /> Console AI</button>
-                <button onClick={() => setActiveTab('HISTORY')} className={`flex-1 py-2.5 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all flex items-center justify-center gap-1.5 ${activeTab === 'HISTORY' ? 'bg-slate-200 text-yellow-600 shadow-sm border border-slate-300' : 'text-slate-500 hover:text-slate-700'}`}><History size={12} /> Winrate: {winRate}%</button>
-                <button onClick={() => setActiveTab('DAILY')} className={`flex-1 py-2.5 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all flex items-center justify-center gap-1.5 ${activeTab === 'DAILY' ? 'bg-slate-200 text-purple-600 shadow-sm border border-slate-300' : 'text-slate-500 hover:text-slate-700'}`}>Ngày</button>
+            <div className="bg-slate-800 rounded-2xl border border-slate-700 flex flex-col overflow-hidden shadow-lg">
+              <div className="flex bg-slate-900 border-b border-slate-700 p-1">
+                <button onClick={() => setActiveTab('LOGS')} className={`flex-1 py-2.5 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all flex items-center justify-center gap-1.5 ${activeTab === 'LOGS' ? 'bg-slate-800 text-blue-600 shadow-sm border border-slate-700' : 'text-slate-400 hover:text-slate-200'}`}><Terminal size={12} /> Console AI</button>
+                <button onClick={() => setActiveTab('HISTORY')} className={`flex-1 py-2.5 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all flex items-center justify-center gap-1.5 ${activeTab === 'HISTORY' ? 'bg-slate-800 text-yellow-600 shadow-sm border border-slate-700' : 'text-slate-400 hover:text-slate-200'}`}><History size={12} /> Winrate: {winRate}%</button>
+                <button onClick={() => setActiveTab('DAILY')} className={`flex-1 py-2.5 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all flex items-center justify-center gap-1.5 ${activeTab === 'DAILY' ? 'bg-slate-800 text-purple-600 shadow-sm border border-slate-700' : 'text-slate-400 hover:text-slate-200'}`}>Ngày</button>
               </div>
-              <div className="flex-1 overflow-y-auto p-3 custom-scrollbar bg-slate-50 font-mono">
+              <div className="flex-1 overflow-y-auto p-3 custom-scrollbar bg-slate-900/70 font-mono">
                 {activeTab === 'LOGS' ? (
                   <div className="space-y-2">
                     {logs.slice(-15).map((log, i) => (
-                      <div key={i} className={`text-[10px] border-l-[3px] pl-3 py-2 leading-relaxed rounded-r-lg ${log.type === 'success' ? 'border-green-500 text-green-700 bg-green-50' : log.type === 'danger' ? 'border-red-500 text-red-700 bg-red-50' : log.type === 'analysis' ? 'border-blue-500 text-blue-700 bg-blue-50' : 'border-slate-400 text-slate-600 bg-slate-100'}`}><span className="opacity-50 mr-2">[{log.msg.substring(1, 12)}]</span>{log.msg.substring(13)}</div>
+                      <div key={i} className={`text-[10px] border-l-[3px] pl-3 py-2 leading-relaxed rounded-r-lg ${log.type === 'success' ? 'border-green-500 text-green-700 bg-green-50' : log.type === 'danger' ? 'border-red-500 text-red-300 bg-red-50' : log.type === 'analysis' ? 'border-blue-500 text-blue-700 bg-blue-50' : 'border-slate-400 text-slate-400 bg-slate-900'}`}><span className="opacity-50 mr-2">[{log.msg.substring(1, 12)}]</span>{log.msg.substring(13)}</div>
                     ))}
                     <div ref={logsEndRef} />
                   </div>
                 ) : activeTab === 'HISTORY' ? (
                   <div className="space-y-2">
                     {history.map((trade) => (
-                      <div key={trade.id} className="bg-slate-200 p-3 rounded-xl border border-slate-300 flex justify-between items-center transition-hover hover:bg-slate-50">
+                      <div key={trade.id} className="bg-slate-800 p-3 rounded-xl border border-slate-700 flex justify-between items-center transition-hover hover:bg-slate-900/70">
                         <div>
                           <div className={`text-xs font-black uppercase ${trade.type === 'LONG' ? 'text-green-500' : 'text-red-500'}`}>{trade.type} <span className="text-gray-500 text-[9px] ml-1">x{CONFIG.LEVERAGE}</span></div>
-                          <div className="text-[10px] text-slate-500 mt-1 italic opacity-80">{trade.reason}</div>
+                          <div className="text-[10px] text-slate-400 mt-1 italic opacity-80">{trade.reason}</div>
                         </div>
                         <div className="text-right">
                           <div className={`text-sm font-black ${trade.pnl > 0 ? 'text-green-400' : 'text-red-400'}`}>{trade.pnl > 0 ? '+' : ''}{trade.pnl.toFixed(2)} USDT</div>

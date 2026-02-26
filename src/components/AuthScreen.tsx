@@ -29,22 +29,22 @@ export default function AuthScreen() {
     };
 
     return (
-        <div className="fixed inset-0 z-40 bg-slate-100 flex items-center justify-center p-4 font-sans text-slate-800">
-            <div className="bg-slate-200 p-6 sm:p-8 rounded-[1.5rem] sm:rounded-[2rem] border border-slate-200 w-full max-w-md shadow-2xl relative overflow-hidden">
+        <div className="fixed inset-0 z-40 bg-slate-900 flex items-center justify-center p-4 font-sans text-slate-100">
+            <div className="bg-slate-800 p-6 sm:p-8 rounded-[1.5rem] sm:rounded-[2rem] border border-slate-700 w-full max-w-md shadow-2xl relative overflow-hidden">
                 <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500"></div>
                 <div className="flex justify-center mb-6">
                     <div className="p-3 sm:p-4 bg-gradient-to-br from-blue-600 to-purple-600 rounded-2xl shadow-lg shadow-purple-500/20 text-white">
                         <ShieldCheck size={32} />
                     </div>
                 </div>
-                <h2 className="text-xl sm:text-2xl font-black text-center mb-2 uppercase tracking-tighter text-slate-800">Cyber-Pro Login</h2>
+                <h2 className="text-xl sm:text-2xl font-black text-center mb-2 uppercase tracking-tighter text-slate-100">Cyber-Pro Login</h2>
                 <form onSubmit={handleAuth} className="space-y-4 mt-6">
                     <input
                         type="email"
                         value={email}
                         onChange={e => setEmail(e.target.value)}
                         required
-                        className="w-full bg-slate-100 border border-slate-300 rounded-xl p-4 text-sm outline-none focus:border-blue-500 transition-colors"
+                        className="w-full bg-slate-900 border border-slate-700 rounded-xl p-4 text-sm outline-none focus:border-blue-500 transition-colors"
                         placeholder="Địa chỉ Email"
                     />
                     <input
@@ -52,10 +52,10 @@ export default function AuthScreen() {
                         value={password}
                         onChange={e => setPassword(e.target.value)}
                         required
-                        className="w-full bg-slate-100 border border-slate-300 rounded-xl p-4 text-sm outline-none focus:border-blue-500 transition-colors"
+                        className="w-full bg-slate-900 border border-slate-700 rounded-xl p-4 text-sm outline-none focus:border-blue-500 transition-colors"
                         placeholder="Mật khẩu bảo mật"
                     />
-                    {error && <p className="text-red-600 text-xs text-center font-bold bg-red-100 p-2 rounded-lg">{error}</p>}
+                    {error && <p className="text-red-600 text-xs text-center font-bold bg-red-900/30 p-2 rounded-lg">{error}</p>}
                     <button
                         type="submit"
                         disabled={loading}
@@ -66,7 +66,7 @@ export default function AuthScreen() {
                 </form>
                 <button
                     onClick={() => setIsLogin(!isLogin)}
-                    className="w-full mt-6 text-slate-500 text-xs hover:text-blue-500 uppercase font-bold tracking-widest"
+                    className="w-full mt-6 text-slate-400 text-xs hover:text-blue-500 uppercase font-bold tracking-widest"
                 >
                     {isLogin ? "Chưa có tài khoản?" : "Quay lại đăng nhập"}
                 </button>
