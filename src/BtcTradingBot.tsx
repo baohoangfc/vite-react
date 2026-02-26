@@ -171,8 +171,10 @@ export default function BitcoinTradingBot() {
   const runQuickBacktest = async () => {
     setBacktestLoading(true);
     try {
-      const startTime = new Date(`${backtestFromDate}T00:00:00.000Z`).getTime();
-      const endTime = new Date(`${backtestToDate}T23:59:59.999Z`).getTime();
+      const normalizedFromDate = backtestFromDate || new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+      const normalizedToDate = backtestToDate || new Date().toISOString().slice(0, 10);
+      const startTime = new Date(`${normalizedFromDate}T00:00:00.000Z`).getTime();
+      const endTime = new Date(`${normalizedToDate}T23:59:59.999Z`).getTime();
 
       if (!Number.isFinite(startTime) || !Number.isFinite(endTime) || startTime >= endTime) {
         addLog('Khoảng ngày backtest không hợp lệ.', 'danger');
@@ -217,7 +219,7 @@ export default function BitcoinTradingBot() {
       }
 
       const result = runBacktest(formattedCandles);
-      const rangeLabel = `${backtestFromDate} → ${backtestToDate}`;
+      const rangeLabel = `${normalizedFromDate} → ${normalizedToDate}`;
       setBacktestRangeLabel(rangeLabel);
       setBacktestResult(result);
       addLog(
