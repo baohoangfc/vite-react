@@ -35,6 +35,7 @@ export const CONFIG = {
     COOLDOWN_MS: 60 * 1000,
     ALERT_DRAWDOWN_PERCENT: 5,
     ALERT_DAILY_SUMMARY_MS: 24 * 60 * 60 * 1000,
+    API_URL: import.meta.env.VITE_API_URL || 'https://exus-bot-backend.onrender.com',
 };
 
 export const getSafeAppId = () => {

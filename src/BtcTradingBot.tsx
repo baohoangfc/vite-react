@@ -381,7 +381,7 @@ export default function BitcoinTradingBot() {
 
   const syncRuntimeState = async (running: boolean) => {
     try {
-      const response = await fetch('/api/runtime', {
+      const response = await fetch(`${CONFIG.API_URL}/api/runtime`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -523,7 +523,7 @@ export default function BitcoinTradingBot() {
   useEffect(() => {
     const syncInitialRuntime = async () => {
       try {
-        const response = await fetch('/api/runtime');
+        const response = await fetch(`${CONFIG.API_URL}/api/runtime`);
         if (!response.ok) return;
         const data = await response.json();
         setRuntimeOnline(Boolean(data.background));
@@ -546,7 +546,7 @@ export default function BitcoinTradingBot() {
 
     const pullRuntimeState = async () => {
       try {
-        const response = await fetch('/api/runtime');
+        const response = await fetch(`${CONFIG.API_URL}/api/runtime`);
         if (!response.ok) return;
         const data = await response.json();
 
@@ -1256,17 +1256,17 @@ export default function BitcoinTradingBot() {
                     ))}
                   </div>
                 ) : (
-                  <div className="space-y-3"> 
+                  <div className="space-y-3">
                     <DailyAggregation history={history} />
-                    <div className="bg-white/5 border border-white/10 rounded-xl p-3 space-y-3"> 
-                      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3"> 
+                    <div className="bg-white/5 border border-white/10 rounded-xl p-3 space-y-3">
+                      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                         <p className="text-xs font-bold text-purple-300">Backtest nhanh (Binance {CONFIG.SYMBOL})</p>
                         <div className="flex flex-col sm:flex-row gap-2">
                           <button onClick={() => { setBacktestDate(new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().split('T')[0]); setBacktestDays(7); }} className="w-full sm:w-auto px-3 py-2 rounded-lg bg-white/10 text-slate-100 text-xs font-bold hover:bg-white/20">Hôm qua + 7 ngày</button>
                           <button onClick={runQuickBacktest} disabled={backtestLoading} className="w-full sm:w-auto px-3 py-2 rounded-lg bg-purple-500/20 text-purple-200 text-xs font-bold hover:bg-purple-500/30 disabled:opacity-50">{backtestLoading ? 'Đang chạy...' : 'Chạy backtest'}</button>
                         </div>
                       </div>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2"> 
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                         <label className="text-[11px] text-slate-200 flex flex-col gap-1">
                           Ngày kết thúc
                           <input type="date" value={backtestDate} onChange={(e) => setBacktestDate(e.target.value)} max={new Date().toISOString().split('T')[0]} className="bg-slate-900/70 border border-slate-500 rounded-lg px-2.5 py-2 text-[11px] text-slate-100 focus:outline-none focus:border-violet-400" />
@@ -1278,7 +1278,7 @@ export default function BitcoinTradingBot() {
                       </div>
                       {backtestResult ? (
                         <div className="space-y-3">
-                          <div className="grid grid-cols-2 gap-2 text-[11px] text-slate-100"> 
+                          <div className="grid grid-cols-2 gap-2 text-[11px] text-slate-100">
                             <p>Tổng lệnh: <b>{backtestResult.totalTrades}</b></p>
                             <p>Win rate: <b>{backtestResult.winRate.toFixed(1)}%</b></p>
                             <p>PnL: <b className={backtestResult.netPnl >= 0 ? 'text-emerald-300' : 'text-red-300'}>{backtestResult.netPnl.toFixed(2)} USDT</b></p>

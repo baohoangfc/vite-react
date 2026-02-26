@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import BitcoinTradingBot from './BtcTradingBot'
+import { CONFIG } from './config'
 
 type BackendStatus = {
   status: string
@@ -14,7 +15,7 @@ function App() {
   useEffect(() => {
     const checkBackend = async () => {
       try {
-        const response = await fetch('/api/health')
+        const response = await fetch(`${CONFIG.API_URL}/api/health`)
         if (!response.ok) throw new Error('Backend is not responding')
 
         const data = (await response.json()) as BackendStatus
