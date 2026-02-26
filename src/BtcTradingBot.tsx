@@ -29,6 +29,62 @@ import DailyAggregation from './components/Dashboard/DailyAggregation';
 import SentimentIndicators from './components/Dashboard/SentimentIndicators';
 import { BacktestResult, runBacktest } from './utils/backtest';
 
+type BacktestSuggestion = {
+  level: 'good' | 'warning' | 'info'
+  text: string
+};
+
+const getBacktestSuggestions = (result: BacktestResult): BacktestSuggestion[] => {
+  const suggestions: BacktestSuggestion[] = [];
+
+  if (result.totalTrades < 5) {
+    suggestions.push({
+      level: 'warning',
+      text: 'Số lệnh quá ít, hãy tăng số ngày backtest để dữ liệu đáng tin hơn.',
+    });
+  }
+
+  if (result.winRate < 40) {
+    suggestions.push({
+      level: 'warning',
+      text: 'Win rate thấp: cân nhắc siết điều kiện vào lệnh hoặc giảm đòn bẩy.',
+    });
+  } else if (result.winRate > 60) {
+    suggestions.push({
+      level: 'good',
+      text: 'Win rate đang tốt, có thể forward-test trên tài khoản demo trước khi tăng vốn.',
+    });
+  }
+
+  if (result.maxDrawdownPercent > 15) {
+    suggestions.push({
+      level: 'warning',
+      text: 'Max drawdown cao, nên giảm risk mỗi lệnh và bổ sung cơ chế dừng giao dịch theo ngày.',
+    });
+  }
+
+  if (result.expectancy <= 0) {
+    suggestions.push({
+      level: 'warning',
+      text: 'Expectancy chưa dương, chiến lược chưa có lợi thế rõ ràng.',
+    });
+  } else {
+    suggestions.push({
+      level: 'good',
+      text: 'Expectancy dương, chiến lược có lợi thế thống kê trong giai đoạn đã test.',
+    });
+  }
+
+  if (suggestions.length === 0) {
+    suggestions.push({
+      level: 'info',
+      text: 'Kết quả ổn định. Bạn có thể test thêm theo từng tháng để kiểm tra độ bền chiến lược.',
+    });
+  }
+
+  return suggestions.slice(0, 3);
+};
+
 export default function BitcoinTradingBot() {
   if (!isFirebaseConfigured) return <SetupScreen />;
 
@@ -52,6 +108,8 @@ export default function BitcoinTradingBot() {
   const [showSettings, setShowSettings] = useState(false);
   const [backtestResult, setBacktestResult] = useState<BacktestResult | null>(null);
   const [backtestLoading, setBacktestLoading] = useState(false);
+  const [backtestDate, setBacktestDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [backtestDays, setBacktestDays] = useState(3);
   const [runtimeOnline, setRuntimeOnline] = useState(false);
 
   // Trading State (Cloud Synced)
@@ -162,11 +220,27 @@ export default function BitcoinTradingBot() {
     syncRuntimeState(nextRunning);
   };
 
-  const runQuickBacktest = async () => {
-    setBacktestLoading(true);
-    try {
-      const res = await fetch(`https://api.binance.com/api/v3/klines?symbol=${CONFIG.SYMBOL}&interval=${CONFIG.INTERVAL}&limit=700`);
+  const fetchHistoricalCandles = async (endTimeMs: number, days: number) => {
+    const dayMs = 24 * 60 * 60 * 1000;
+    const startTimeMs = Math.max(0, endTimeMs - days * dayMs);
+    const allCandles: Candle[] = [];
+    let cursor = startTimeMs;
+
+    while (cursor < endTimeMs) {
+      const query = new URLSearchParams({
+        symbol: CONFIG.SYMBOL,
+        interval: CONFIG.INTERVAL,
+        startTime: String(cursor),
+        endTime: String(endTimeMs),
+        limit: '1000',
+      });
+
+      const res = await fetch(`https://api.binance.com/api/v3/klines?${query.toString()}`);
+      if (!res.ok) throw new Error(`Không tải được dữ liệu nến (${res.status})`);
+
       const data = await res.json();
+      if (!Array.isArray(data) || data.length === 0) break;
+
       const formattedCandles: Candle[] = data.map((k: any) => ({
         time: Number(k[0]),
         open: parseFloat(k[1]),
@@ -174,11 +248,36 @@ export default function BitcoinTradingBot() {
         low: parseFloat(k[3]),
         close: parseFloat(k[4]),
         volume: parseFloat(k[5]),
-        isGreen: parseFloat(k[4]) >= parseFloat(k[1])
+        isGreen: parseFloat(k[4]) >= parseFloat(k[1]),
       }));
-      const result = runBacktest(formattedCandles);
+
+      allCandles.push(...formattedCandles);
+
+      const lastOpenTime = Number(data[data.length - 1]?.[0]);
+      if (!Number.isFinite(lastOpenTime) || data.length < 1000) break;
+      cursor = lastOpenTime + 1;
+    }
+
+    return allCandles
+      .filter((candle) => candle.time >= startTimeMs && candle.time <= endTimeMs)
+      .sort((a, b) => a.time - b.time);
+  };
+
+  const runQuickBacktest = async () => {
+    setBacktestLoading(true);
+    try {
+      const safeDays = Math.min(30, Math.max(1, Math.floor(backtestDays)));
+      const targetDay = new Date(`${backtestDate}T23:59:59.999Z`);
+      const endTimeMs = Number.isFinite(targetDay.getTime()) ? targetDay.getTime() : Date.now();
+      const candlesForBacktest = await fetchHistoricalCandles(endTimeMs, safeDays);
+
+      if (candlesForBacktest.length <= CONFIG.EMA_PERIOD) {
+        throw new Error('Không đủ nến để chạy backtest, hãy tăng số ngày.');
+      }
+
+      const result = runBacktest(candlesForBacktest);
       setBacktestResult(result);
-      addLog(`Backtest hoàn tất: ${result.totalTrades} lệnh, WR ${result.winRate.toFixed(1)}%, PnL ${result.netPnl.toFixed(2)} USDT`, 'info');
+      addLog(`Backtest ${safeDays} ngày đến ${backtestDate}: ${result.totalTrades} lệnh, WR ${result.winRate.toFixed(1)}%, PnL ${result.netPnl.toFixed(2)} USDT`, 'info');
     } catch (error: any) {
       addLog(`Lỗi backtest: ${error?.message || 'Không thể tải dữ liệu'}`, 'danger');
     } finally {
@@ -597,10 +696,10 @@ export default function BitcoinTradingBot() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-5 flex-1">
             <ActivePosition position={position} currentPrice={currentPrice} unrealizedPnl={unrealizedPnl} unrealizedRoe={unrealizedRoe} onCloseOrder={handleCloseOrder} />
             <div className="bg-[#0d1117]/80 backdrop-blur-xl rounded-2xl border border-white/5 flex flex-col overflow-hidden shadow-xl">
-              <div className="flex bg-[#1e2329]/50 border-b border-white/5 p-1">
-                <button onClick={() => setActiveTab('LOGS')} className={`flex-1 py-2.5 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all flex items-center justify-center gap-1.5 ${activeTab === 'LOGS' ? 'bg-[#0d1117] text-blue-400 shadow-sm border border-white/5' : 'text-gray-500 hover:text-gray-300'}`}><Terminal size={12} /> Console AI</button>
-                <button onClick={() => setActiveTab('HISTORY')} className={`flex-1 py-2.5 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all flex items-center justify-center gap-1.5 ${activeTab === 'HISTORY' ? 'bg-[#0d1117] text-yellow-400 shadow-sm border border-white/5' : 'text-gray-500 hover:text-gray-300'}`}><History size={12} /> Winrate: {winRate}%</button>
-                <button onClick={() => setActiveTab('DAILY')} className={`flex-1 py-2.5 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all flex items-center justify-center gap-1.5 ${activeTab === 'DAILY' ? 'bg-[#0d1117] text-purple-400 shadow-sm border border-white/5' : 'text-gray-500 hover:text-gray-300'}`}>Ngày</button>
+              <div className="grid grid-cols-3 bg-[#1e2329]/50 border-b border-white/5 p-1 gap-1">
+                <button onClick={() => setActiveTab('LOGS')} className={`min-h-10 px-2 py-2.5 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all flex items-center justify-center gap-1.5 border border-transparent whitespace-nowrap ${activeTab === 'LOGS' ? 'bg-[#0d1117] text-blue-400 shadow-sm border-white/5' : 'text-gray-500 hover:text-gray-300 hover:bg-[#0d1117]/50'}`}><Terminal size={12} /> Console AI</button>
+                <button onClick={() => setActiveTab('HISTORY')} className={`min-h-10 px-2 py-2.5 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all flex items-center justify-center gap-1.5 border border-transparent whitespace-nowrap ${activeTab === 'HISTORY' ? 'bg-[#0d1117] text-yellow-400 shadow-sm border-white/5' : 'text-gray-500 hover:text-gray-300 hover:bg-[#0d1117]/50'}`}><History size={12} /> Winrate: {winRate}%</button>
+                <button onClick={() => setActiveTab('DAILY')} className={`min-h-10 px-2 py-2.5 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all flex items-center justify-center gap-1.5 border border-transparent whitespace-nowrap ${activeTab === 'DAILY' ? 'bg-[#0d1117] text-purple-400 shadow-sm border-white/5' : 'text-gray-500 hover:text-gray-300 hover:bg-[#0d1117]/50'}`}>Ngày</button>
               </div>
               <div className="flex-1 overflow-y-auto p-3 custom-scrollbar bg-[#05070a]/50 font-mono">
                 {activeTab === 'LOGS' ? (
@@ -628,18 +727,43 @@ export default function BitcoinTradingBot() {
                   <div className="space-y-3"> 
                     <DailyAggregation history={history} />
                     <div className="bg-white/5 border border-white/10 rounded-xl p-3 space-y-3"> 
-                      <div className="flex items-center justify-between"> 
+                      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3"> 
                         <p className="text-xs font-bold text-purple-300">Backtest nhanh (Binance {CONFIG.SYMBOL})</p>
-                        <button onClick={runQuickBacktest} disabled={backtestLoading} className="px-3 py-1.5 rounded-lg bg-purple-500/20 text-purple-200 text-xs font-bold hover:bg-purple-500/30 disabled:opacity-50">{backtestLoading ? 'Đang chạy...' : 'Chạy backtest'}</button>
+                        <div className="flex flex-col sm:flex-row gap-2">
+                          <button onClick={() => { setBacktestDate(new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().split('T')[0]); setBacktestDays(7); }} className="w-full sm:w-auto px-3 py-2 rounded-lg bg-white/10 text-gray-200 text-xs font-bold hover:bg-white/20">Hôm qua + 7 ngày</button>
+                          <button onClick={runQuickBacktest} disabled={backtestLoading} className="w-full sm:w-auto px-3 py-2 rounded-lg bg-purple-500/20 text-purple-200 text-xs font-bold hover:bg-purple-500/30 disabled:opacity-50">{backtestLoading ? 'Đang chạy...' : 'Chạy backtest'}</button>
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2"> 
+                        <label className="text-[11px] text-gray-300 flex flex-col gap-1">
+                          Ngày kết thúc
+                          <input type="date" value={backtestDate} onChange={(e) => setBacktestDate(e.target.value)} max={new Date().toISOString().split('T')[0]} className="bg-[#05070a] border border-white/10 rounded-lg px-2.5 py-2 text-[11px] text-white focus:outline-none focus:border-purple-400" />
+                        </label>
+                        <label className="text-[11px] text-gray-300 flex flex-col gap-1">
+                          Số ngày lịch sử
+                          <input type="number" min={1} max={30} value={backtestDays} onChange={(e) => setBacktestDays(Number(e.target.value) || 1)} className="bg-[#05070a] border border-white/10 rounded-lg px-2.5 py-2 text-[11px] text-white focus:outline-none focus:border-purple-400" />
+                        </label>
                       </div>
                       {backtestResult ? (
-                        <div className="grid grid-cols-2 gap-2 text-[11px] text-gray-200"> 
-                          <p>Tổng lệnh: <b>{backtestResult.totalTrades}</b></p>
-                          <p>Win rate: <b>{backtestResult.winRate.toFixed(1)}%</b></p>
-                          <p>PnL: <b className={backtestResult.netPnl >= 0 ? 'text-emerald-300' : 'text-red-300'}>{backtestResult.netPnl.toFixed(2)} USDT</b></p>
-                          <p>Profit factor: <b>{Number.isFinite(backtestResult.profitFactor) ? backtestResult.profitFactor.toFixed(2) : '∞'}</b></p>
-                          <p>Expectancy: <b>{backtestResult.expectancy.toFixed(2)}</b></p>
-                          <p>Max DD: <b>{backtestResult.maxDrawdownPercent.toFixed(2)}%</b></p>
+                        <div className="space-y-3">
+                          <div className="grid grid-cols-2 gap-2 text-[11px] text-gray-200"> 
+                            <p>Tổng lệnh: <b>{backtestResult.totalTrades}</b></p>
+                            <p>Win rate: <b>{backtestResult.winRate.toFixed(1)}%</b></p>
+                            <p>PnL: <b className={backtestResult.netPnl >= 0 ? 'text-emerald-300' : 'text-red-300'}>{backtestResult.netPnl.toFixed(2)} USDT</b></p>
+                            <p>Profit factor: <b>{Number.isFinite(backtestResult.profitFactor) ? backtestResult.profitFactor.toFixed(2) : '∞'}</b></p>
+                            <p>Expectancy: <b>{backtestResult.expectancy.toFixed(2)}</b></p>
+                            <p>Max DD: <b>{backtestResult.maxDrawdownPercent.toFixed(2)}%</b></p>
+                          </div>
+                          <div className="rounded-lg border border-white/10 bg-[#05070a]/70 p-2.5">
+                            <p className="text-[11px] font-bold text-purple-200 mb-2">Gợi ý tối ưu</p>
+                            <ul className="space-y-1.5">
+                              {getBacktestSuggestions(backtestResult).map((tip, idx) => (
+                                <li key={idx} className={`text-[11px] ${tip.level === 'good' ? 'text-emerald-300' : tip.level === 'warning' ? 'text-amber-200' : 'text-gray-300'}`}>
+                                  • {tip.text}
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
                         </div>
                       ) : <p className="text-[11px] text-gray-400">Bấm “Chạy backtest” để xem hiệu suất nhanh trên dữ liệu nến lịch sử.</p>}
                     </div>
