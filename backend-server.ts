@@ -255,7 +255,7 @@ const processStrategyTick = async () => {
     let candles1m: Candle[] = [];
 
     for (const int of intervals) {
-      const limit = int === '1m' ? CONFIG.LIMIT_CANDLES : CONFIG.EMA_PERIOD + 1;
+      const limit = int === '1m' ? Math.min(CONFIG.LIMIT_CANDLES || 1000, 1000) : CONFIG.EMA_PERIOD + 1;
       const c = await fetchCandles(int, limit);
       if (int === '1m') {
         candles1m = c;
