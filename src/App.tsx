@@ -34,15 +34,15 @@ function App() {
   }, [])
 
   return (
-    <div className="w-full min-h-screen bg-[#0b0e11]">
+    <div className="w-full min-h-screen bg-slate-100">
       <div className="mx-auto max-w-6xl px-4 pt-4">
-        <div className="rounded-lg border border-slate-700 bg-slate-900/80 p-3 text-sm text-slate-200">
+        <div className="rounded-lg border border-slate-300 bg-white p-3 text-sm text-slate-700 shadow-sm">
           {backend ? (
             <p>
               Backend connected: <strong>{backend.service}</strong> ({backend.status})
             </p>
           ) : (
-            <p className="text-red-400">Backend disconnected: {backendError}</p>
+            <p className="text-red-600">Backend disconnected: {backendError}</p>
           )}
         </div>
       </div>

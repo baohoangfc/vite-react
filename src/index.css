@@ -6,8 +6,8 @@
   font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
   line-height: 1.5;
   font-weight: 400;
-  color-scheme: dark;
-  background-color: #0b0e11;
+  color-scheme: light;
+  background-color: #f1f5f9;
 }
 
 body {
@@ -20,9 +20,9 @@ body {
 
 /* Custom scrollbar cho Nhật ký AI */
 .custom-scrollbar::-webkit-scrollbar {
-  width: 4px;
+  width: 6px;
 }
 .custom-scrollbar::-webkit-scrollbar-thumb {
-  background: #2b3139;
+  background: #94a3b8;
   border-radius: 4px;
 }
