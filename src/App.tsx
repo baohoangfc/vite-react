@@ -46,6 +46,7 @@ function App() {
           )}
         </div>
       </div>
+      <div aria-hidden className="h-20" />
       <BitcoinTradingBot />
     </div>
   )
