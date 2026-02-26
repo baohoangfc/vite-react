@@ -36,6 +36,7 @@ export const runBacktest = (candles: Candle[]): BacktestResult => {
   } = null
 
   const tradePnls: number[] = []
+  const rsiThresholds = CONFIG.RSI_OVERBOUGHT_OVERSOLD
 
   for (let i = CONFIG.EMA_PERIOD; i < candles.length; i++) {
     const series = candles.slice(0, i + 1)
@@ -53,6 +54,17 @@ export const runBacktest = (candles: Candle[]): BacktestResult => {
 
     if (position) {
       const isLong = position.type === 'LONG'
+
+      const halfwayToTp = isLong
+        ? lastCandle.close >= position.entryPrice + (position.tpPrice - position.entryPrice) * 0.5
+        : lastCandle.close <= position.entryPrice - (position.entryPrice - position.tpPrice) * 0.5
+
+      if (halfwayToTp) {
+        position.slPrice = isLong
+          ? Math.max(position.slPrice, position.entryPrice)
+          : Math.min(position.slPrice, position.entryPrice)
+      }
+
       const pnl = isLong
         ? (lastCandle.close - position.entryPrice) * (position.size / position.entryPrice)
         : (position.entryPrice - lastCandle.close) * (position.size / position.entryPrice)
@@ -73,8 +85,8 @@ export const runBacktest = (candles: Candle[]): BacktestResult => {
     if (balance < 10 || volSma === 0 || lastCandle.volume < volSma * CONFIG.VOL_MULTIPLIER) continue
 
     let signalType: 'LONG' | 'SHORT' | null = null
-    if (score >= CONFIG.CONFLUENCE_THRESHOLD && rsi <= 45) signalType = 'LONG'
-    if (score <= -CONFIG.CONFLUENCE_THRESHOLD && rsi >= 55) signalType = 'SHORT'
+    if (score >= CONFIG.CONFLUENCE_THRESHOLD && rsi <= rsiThresholds.oversold) signalType = 'LONG'
+    if (score <= -CONFIG.CONFLUENCE_THRESHOLD && rsi >= rsiThresholds.overbought) signalType = 'SHORT'
 
     if (!signalType) continue
 

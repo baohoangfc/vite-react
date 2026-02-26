@@ -11,11 +11,17 @@ export const CONFIG = {
     MACD_SIGNAL: 9,
 
     // Logic Tín hiệu
-    RSI_OVERSOLD: 30, // Chặt chẽ hơn, trước đây là 35
-    RSI_OVERBOUGHT: 70, // Chặt chẽ hơn, trước đây là 65
+    RSI_OVERSOLD: 30,
+    RSI_OVERBOUGHT: 70,
+    RSI_OVERBOUGHT_OVERSOLD: {
+        oversold: 30,
+        overbought: 70,
+        neutral_low: 45,
+        neutral_high: 55,
+    },
     VOL_MULTIPLIER: 1.2,
     VOL_SMA_PERIOD: 20, // Đường SMA 20 cho Volume Filter
-    CONFLUENCE_THRESHOLD: 4, // Yêu cầu ít nhất 4/5 tín hiệu đồng thuận
+    CONFLUENCE_THRESHOLD: 4,
 
     // Quản lý vốn & Cloud
     LEVERAGE: 50,
