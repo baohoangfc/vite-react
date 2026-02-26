@@ -99,7 +99,7 @@ const startHeartbeat = () => {
   runtimeState.heartbeatTimer = setInterval(() => {
     const posText = runtimeState.position ? `${runtimeState.position.type} @ ${runtimeState.position.entryPrice.toFixed(2)}` : 'Không có lệnh mở';
     sendTelegram(
-      `💓 <b>BOT BACKGROUND ĐANG CHẠY</b>\n• Cặp: ${runtimeState.symbol}\n• Uptime: ${Math.floor((Date.now() - Number(runtimeState.startedAt || Date.now())) / 60000)} phút\n• Position: ${posText}\n• Balance: ${runtimeState.balance.toFixed(2)} USDT\n• PnL hôm nay: ${runtimeState.pnlToday.toFixed(2)} USDT`,
+      `💓 <b>BOT BACKGROUND ĐANG CHẠY</b>\n• Cặp: ${runtimeState.symbol}\n• Uptime: ${Math.floor((Date.now() - new Date(runtimeState.startedAt || Date.now()).getTime()) / 60000)} phút\n• Position: ${posText}\n• Balance: ${runtimeState.balance.toFixed(2)} USDT\n• PnL hôm nay: ${runtimeState.pnlToday.toFixed(2)} USDT`,
     );
   }, runtimeState.heartbeatMs);
 };
