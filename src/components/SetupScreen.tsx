@@ -17,17 +17,17 @@ export default function SetupScreen() {
     };
 
     return (
-        <div className="min-h-screen bg-[#05070a] text-white flex flex-col items-center justify-center p-4 sm:p-6 font-sans">
+        <div className="min-h-screen bg-slate-200 text-slate-800 flex flex-col items-center justify-center p-4 sm:p-6 font-sans">
             <Database size={50} className="text-blue-500 mb-6 animate-pulse drop-shadow-[0_0_15px_rgba(59,130,246,0.5)]" />
             <h1 className="text-2xl sm:text-3xl font-black mb-3 text-center uppercase tracking-tighter">Kết nối Database</h1>
             <div className="w-full max-w-xl space-y-4">
                 <textarea
                     value={jsonInput}
                     onChange={(e) => setJsonInput(e.target.value)}
-                    className="w-full h-40 sm:h-48 bg-[#0d1117] border border-gray-800 rounded-2xl sm:rounded-3xl p-4 sm:p-5 font-mono text-xs sm:text-sm text-green-400 focus:border-blue-500 outline-none shadow-inner"
+                    className="w-full h-40 sm:h-48 bg-slate-100 border border-slate-300 rounded-2xl sm:rounded-3xl p-4 sm:p-5 font-mono text-xs sm:text-sm text-slate-700 focus:border-blue-500 outline-none shadow-inner"
                     placeholder={`{\n  apiKey: "AIzaSy...",\n  authDomain: "...",\n  projectId: "...",\n  appId: "..."\n}`}
                 />
-                {error && <p className="text-red-400 text-[10px] font-bold text-center bg-red-500/10 p-2 rounded-lg">{error}</p>}
+                {error && <p className="text-red-700 text-[10px] font-bold text-center bg-red-100 p-2 rounded-lg">{error}</p>}
                 <button onClick={handleSaveConfig} className="w-full bg-blue-600 hover:bg-blue-700 font-black py-3.5 sm:py-4 rounded-xl transition-all shadow-lg shadow-blue-500/20 active:scale-95 uppercase tracking-widest text-sm">Khởi tạo Đám mây</button>
             </div>
         </div>
