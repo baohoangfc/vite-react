@@ -327,6 +327,8 @@ export default function BitcoinTradingBot() {
     const posRef = doc(db, 'artifacts', APP_ID, 'users', user.uid, 'position', 'active');
     const histCol = collection(db, 'artifacts', APP_ID, 'users', user.uid, 'history');
     const runtimeRef = doc(db, 'artifacts', APP_ID, 'users', user.uid, 'runtime', 'state');
+    const scalpPosRef = doc(db, 'artifacts', APP_ID, 'users', user.uid, 'scalpPosition', 'active');
+    const scalpHistCol = collection(db, 'artifacts', APP_ID, 'users', user.uid, 'scalpHistory');
 
     const unsubAcc = onSnapshot(userRef, (d) => {
       if (d.exists()) {
@@ -369,7 +371,18 @@ export default function BitcoinTradingBot() {
       setSyncingRunningState(false);
     });
 
-    return () => { unsubAcc(); unsubPos(); unsubHist(); unsubRuntime(); };
+    const unsubScalpPos = onSnapshot(scalpPosRef, (d) => {
+      if (d.exists() && d.data().active && d.data().details) setScalpPosition(d.data().details);
+      else setScalpPosition(null);
+    });
+
+    const unsubScalpHist = onSnapshot(scalpHistCol, (s) => {
+      const list: any[] = [];
+      s.forEach(docSnap => list.push(docSnap.data()));
+      setScalpHistory(list.sort((a, b) => (Number(b.time) || 0) - (Number(a.time) || 0)));
+    });
+
+    return () => { unsubAcc(); unsubPos(); unsubHist(); unsubRuntime(); unsubScalpPos(); unsubScalpHist(); };
   }, [user]);
 
   const addLog = (message: string, type: 'info' | 'success' | 'danger' | 'warning' | 'analysis' = 'info') => {
@@ -1052,6 +1065,13 @@ export default function BitcoinTradingBot() {
 
     setScalpPosition(details);
     setScalpBalance(prev => prev - margin); // Trừ tiền ký quỹ tạm thời
+
+    if (user) {
+      const spRef = doc(db, 'artifacts', APP_ID, 'users', user.uid, 'scalpPosition', 'active');
+      setDoc(spRef, { active: true, details }, { merge: true }).catch(console.error);
+      const userRef = doc(db, 'artifacts', APP_ID, 'users', user.uid, 'account', 'data');
+      setDoc(userRef, { scalpBalance: scalpBalance - margin }, { merge: true }).catch(console.error);
+    }
     lastScalpSignalRef.current = Date.now();
     addLog(`SCALP ${type} @ ${entryPrice.toFixed(2)} | TP ${tpPrice.toFixed(2)} | SL ${slPrice.toFixed(2)} [${setup}]`, 'success');
     sendTelegram(`⚡ <b>SCALP ${type}</b>\n• Setup: ${setup}\n• Entry: ${entryPrice.toFixed(2)}\n• TP: ${tpPrice.toFixed(2)}\n• SL: ${slPrice.toFixed(2)}\n• Margin: ${margin} USDT\n• Lev: x${leverage}`);
@@ -1089,6 +1109,10 @@ export default function BitcoinTradingBot() {
     if (user) {
       const userRef = doc(db, 'artifacts', APP_ID, 'users', user.uid, 'account', 'data');
       setDoc(userRef, { scalpBalance: newBalance }, { merge: true }).catch(console.error);
+      const spRef = doc(db, 'artifacts', APP_ID, 'users', user.uid, 'scalpPosition', 'active');
+      setDoc(spRef, { active: false }, { merge: true }).catch(console.error);
+      const shRef = doc(db, 'artifacts', APP_ID, 'users', user.uid, 'scalpHistory', trade.id);
+      setDoc(shRef, trade).catch(console.error);
     }
 
     addLog(`SCALP ĐÓNG ${activeScalp.type} (${reason}): ${finalPnl > 0 ? '+' : ''}${finalPnl.toFixed(2)} USDT`, finalPnl >= 0 ? 'success' : 'danger');
@@ -1097,8 +1121,33 @@ export default function BitcoinTradingBot() {
 
   useEffect(() => {
     if (!scalpPosition) return;
-    const hitTp = scalpPosition.type === 'LONG' ? currentPrice >= scalpPosition.tpPrice : currentPrice <= scalpPosition.tpPrice;
-    const hitSl = scalpPosition.type === 'LONG' ? currentPrice <= scalpPosition.slPrice : currentPrice >= scalpPosition.slPrice;
+
+    const isL = scalpPosition.type === 'LONG';
+
+    // Trailing SL logic (1.5R)
+    const riskDist = Math.abs(scalpPosition.entryPrice - scalpPosition.slPrice);
+    const currDist = isL ? (currentPrice - scalpPosition.entryPrice) : (scalpPosition.entryPrice - currentPrice);
+
+    if (riskDist > 0 && currDist >= riskDist * 1.5 && !scalpPosition.signalDetail?.isBreakeven) {
+      const newSl = scalpPosition.entryPrice;
+      if ((isL && newSl > scalpPosition.slPrice) || (!isL && newSl < scalpPosition.slPrice)) {
+        const updatedPos = {
+          ...scalpPosition,
+          slPrice: newSl,
+          signalDetail: { ...scalpPosition.signalDetail, isBreakeven: true }
+        };
+        setScalpPosition(updatedPos);
+        if (user) {
+          const spRef = doc(db, 'artifacts', APP_ID, 'users', user.uid, 'scalpPosition', 'active');
+          setDoc(spRef, { active: true, details: updatedPos }, { merge: true }).catch(console.error);
+        }
+        addLog(`SCALP: Đã dời StopLoss về điểm hòa vốn (${newSl.toFixed(2)}) do đạt 1.5R.`, 'success');
+        sendTelegram(`🛡 <b>SCALP TRAILING SL KÍCH HOẠT</b>\n• Lệnh ${scalpPosition.type} đã lãi 1.5R.\n• Đã dời SL về điểm hòa vốn (${newSl.toFixed(2)}). Giao dịch Free Risk!`);
+      }
+    }
+
+    const hitTp = isL ? currentPrice >= scalpPosition.tpPrice : currentPrice <= scalpPosition.tpPrice;
+    const hitSl = isL ? currentPrice <= scalpPosition.slPrice : currentPrice >= scalpPosition.slPrice;
 
     if (hitTp) handleCloseScalpOrder('SCALP TAKE PROFIT');
     else if (hitSl) handleCloseScalpOrder('SCALP STOP LOSS');
