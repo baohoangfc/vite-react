@@ -1026,22 +1026,22 @@ export default function BitcoinTradingBot() {
   const winTrades = history.filter(t => t.pnl > 0).length;
   const winRate = history.length > 0 ? ((winTrades / history.length) * 100).toFixed(1) : 0;
 
-  if (loadingAuth) return <div className="min-h-screen bg-[#05070a] flex items-center justify-center"><Activity className="animate-spin text-blue-500" size={48} /></div>;
+  if (loadingAuth) return <div className="min-h-screen bg-gradient-to-b from-slate-900 via-slate-800 to-slate-900 flex items-center justify-center"><Activity className="animate-spin text-sky-400" size={48} /></div>;
   if (!user) return <AuthScreen />;
 
   return (
-    <div className="min-h-screen bg-[#05070a] text-gray-100 font-sans p-4 md:p-6 selection:bg-blue-500/30">
+    <div className="min-h-screen bg-gradient-to-b from-slate-900 via-slate-800 to-slate-900 text-slate-100 font-sans p-4 md:p-6 selection:bg-sky-500/30">
 
       {showSettings && (
-        <div className="fixed inset-0 bg-black/90 z-50 flex items-center justify-center p-4 backdrop-blur-md">
-          <div className="bg-[#0d1117] p-6 rounded-3xl border border-white/5 max-w-md w-full shadow-2xl">
-            <h2 className="text-xl font-black mb-4 flex items-center gap-2 uppercase tracking-tighter text-blue-400"><Settings size={20} /> Cấu hình Telegram</h2>
+        <div className="fixed inset-0 bg-slate-800/80 z-50 flex items-center justify-center p-4 backdrop-blur-md">
+          <div className="bg-slate-800 p-6 rounded-3xl border border-slate-500/60 max-w-md w-full shadow-2xl">
+            <h2 className="text-xl font-black mb-4 flex items-center gap-2 uppercase tracking-tighter text-sky-300"><Settings size={20} /> Cấu hình Telegram</h2>
             <div className="space-y-4">
-              <input value={tgConfig.token} onChange={e => setTgConfig({ ...tgConfig, token: e.target.value })} className="w-full bg-[#05070a] border border-gray-800 rounded-xl p-3 text-sm text-white focus:border-blue-500 outline-none" placeholder="Bot Token Telegram" />
-              <input value={tgConfig.chatId} onChange={e => setTgConfig({ ...tgConfig, chatId: e.target.value })} className="w-full bg-[#05070a] border border-gray-800 rounded-xl p-3 text-sm text-white focus:border-blue-500 outline-none" placeholder="Chat ID" />
+              <input value={tgConfig.token} onChange={e => setTgConfig({ ...tgConfig, token: e.target.value })} className="w-full bg-slate-900/70 border border-slate-500 rounded-xl p-3 text-sm text-slate-100 focus:border-sky-400 outline-none" placeholder="Bot Token Telegram" />
+              <input value={tgConfig.chatId} onChange={e => setTgConfig({ ...tgConfig, chatId: e.target.value })} className="w-full bg-slate-900/70 border border-slate-500 rounded-xl p-3 text-sm text-slate-100 focus:border-sky-400 outline-none" placeholder="Chat ID" />
             </div>
             <div className="mt-6 flex gap-3">
-              <button onClick={() => setShowSettings(false)} className="flex-1 py-3 text-gray-400 font-bold hover:text-white transition-colors">HỦY</button>
+              <button onClick={() => setShowSettings(false)} className="flex-1 py-3 text-slate-300 font-bold hover:text-white transition-colors">HỦY</button>
               <button onClick={async () => {
                 await setDoc(doc(db, 'artifacts', APP_ID, 'users', user.uid, 'account', 'data'), { tgToken: tgConfig.token, tgChatId: tgConfig.chatId }, { merge: true });
                 setShowSettings(false); addLog("Đã lưu cấu hình Telegram lên Cloud.", "success");
@@ -1052,29 +1052,29 @@ export default function BitcoinTradingBot() {
       )}
 
       <div className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        <div className="lg:col-span-12 flex flex-col md:flex-row justify-between items-center bg-[#0d1117]/80 backdrop-blur-xl p-5 rounded-2xl shadow-2xl border border-white/5 relative overflow-hidden">
+        <div className="lg:col-span-12 flex flex-col md:flex-row justify-between items-center bg-slate-800/80 backdrop-blur-xl p-5 rounded-2xl shadow-2xl border border-slate-500/50 relative overflow-hidden">
           <div className="absolute top-0 left-0 w-full h-[2px] bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500 opacity-50"></div>
           <div className="flex flex-col sm:flex-row items-center gap-4 z-10 w-full sm:w-auto text-center sm:text-left">
             <div className="p-3 bg-gradient-to-br from-blue-600 to-purple-600 rounded-xl text-white shadow-lg shadow-blue-500/30"><Crosshair size={24} /></div>
             <div>
-              <h1 className="text-xl sm:text-2xl font-black bg-clip-text text-transparent bg-gradient-to-r from-white to-gray-400 tracking-tight flex flex-col sm:flex-row items-center gap-2 sm:gap-3">
+              <h1 className="text-xl sm:text-2xl font-black bg-clip-text text-transparent bg-gradient-to-r from-white to-slate-200 tracking-tight flex flex-col sm:flex-row items-center gap-2 sm:gap-3">
                 NEXUS AI TRADER
                 <SentimentIndicators sentiment={sentiment} />
               </h1>
-              <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2 sm:gap-3 text-[10px] sm:text-[11px] text-gray-400 mt-2 sm:mt-1 font-medium">
+              <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2 sm:gap-3 text-[10px] sm:text-[11px] text-slate-300 mt-2 sm:mt-1 font-medium">
                 <span className="flex items-center gap-1"><Layers size={12} /> SMC Engine</span>
-                <span className="border-l border-gray-700 pl-2 sm:pl-3 text-blue-400 font-bold tracking-widest uppercase">LEV x{CONFIG.LEVERAGE}</span>
+                <span className="border-l border-slate-500/60 pl-2 sm:pl-3 text-sky-300 font-bold tracking-widest uppercase">LEV x{CONFIG.LEVERAGE}</span>
                 <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${runtimeOnline ? 'bg-emerald-500/20 text-emerald-300' : 'bg-amber-500/20 text-amber-200'}`}>
                   {runtimeOnline ? 'Background ON' : 'Background OFF'}
                 </span>
-                <button onClick={() => setShowSettings(true)} className="ml-0 sm:ml-2 hover:text-white transition-colors underline decoration-gray-700 underline-offset-2">Telegram</button>
+                <button onClick={() => setShowSettings(true)} className="ml-0 sm:ml-2 hover:text-white transition-colors underline decoration-slate-500/60 underline-offset-2">Telegram</button>
                 <button onClick={() => signOut(auth)} className="text-red-400 hover:text-red-300 transition-colors ml-0 sm:ml-2">Đăng xuất</button>
               </div>
             </div>
           </div>
           <div className="flex flex-col sm:flex-row items-center gap-4 sm:gap-6 mt-6 md:mt-0 z-10 w-full sm:w-auto pt-4 md:pt-0 border-t md:border-t-0 border-white/5 md:border-none">
             <div className="text-center sm:text-right">
-              <p className="text-[10px] text-gray-500 font-bold tracking-widest uppercase mb-1">BTC/USDT M1</p>
+              <p className="text-[10px] text-slate-400 font-bold tracking-widest uppercase mb-1">BTC/USDT M1</p>
               <p className={`text-2xl sm:text-3xl font-mono font-black tracking-tighter ${candles.length > 0 && currentPrice >= candles[candles.length - 1].open ? 'text-[#0ecb81] drop-shadow-[0_0_8px_#0ecb8140]' : 'text-[#f6465d] drop-shadow-[0_0_8px_#f6465d40]'}`}>{currentPrice.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
             </div>
             <button onClick={handleToggleRunning} className={`flex items-center justify-center gap-2 w-full sm:w-36 py-3.5 rounded-xl font-black uppercase tracking-widest transition-all shadow-lg active:scale-95 border ${isRunning ? 'bg-red-500/10 text-red-500 border-red-500/30 hover:bg-red-500/20' : 'bg-green-500 text-[#05070a] border-green-400 hover:bg-green-400 shadow-green-500/20'}`}>
@@ -1086,24 +1086,24 @@ export default function BitcoinTradingBot() {
         <div className="lg:col-span-4 space-y-5 w-full">
           <MarketRadar analysis={analysis} />
           <WalletManager account={account} position={position} unrealizedPnl={unrealizedPnl} />
-          <div className="bg-[#0d1117]/80 backdrop-blur-xl rounded-2xl border border-white/5 p-4 shadow-xl space-y-3">
+          <div className="bg-slate-800/80 backdrop-blur-xl rounded-2xl border border-slate-500/50 p-4 shadow-xl space-y-3">
             <div className="flex items-center justify-between">
               <h3 className="text-xs font-black tracking-widest uppercase text-orange-300">Scalp độc lập</h3>
-              <span className="text-[10px] text-gray-400">PnL: <b className={scalpTotalPnl >= 0 ? 'text-emerald-300' : 'text-red-300'}>{scalpTotalPnl.toFixed(2)} USDT</b></span>
+              <span className="text-[10px] text-slate-300">PnL: <b className={scalpTotalPnl >= 0 ? 'text-emerald-300' : 'text-red-300'}>{scalpTotalPnl.toFixed(2)} USDT</b></span>
             </div>
 
             <div className="grid grid-cols-2 gap-2 text-[11px]">
-              <label className="text-gray-300">Margin (USDT)
-                <input type="number" min={1} value={scalpConfig.margin} onChange={(e) => setScalpConfig((prev) => ({ ...prev, margin: Number(e.target.value) || 1 }))} className="mt-1 w-full bg-[#05070a] border border-white/10 rounded-lg px-2 py-1.5 text-white" />
+              <label className="text-slate-200">Margin (USDT)
+                <input type="number" min={1} value={scalpConfig.margin} onChange={(e) => setScalpConfig((prev) => ({ ...prev, margin: Number(e.target.value) || 1 }))} className="mt-1 w-full bg-slate-900/70 border border-slate-500 rounded-lg px-2 py-1.5 text-slate-100" />
               </label>
-              <label className="text-gray-300">Leverage
-                <input type="number" min={1} max={100} value={scalpConfig.leverage} onChange={(e) => setScalpConfig((prev) => ({ ...prev, leverage: Number(e.target.value) || 1 }))} className="mt-1 w-full bg-[#05070a] border border-white/10 rounded-lg px-2 py-1.5 text-white" />
+              <label className="text-slate-200">Leverage
+                <input type="number" min={1} max={100} value={scalpConfig.leverage} onChange={(e) => setScalpConfig((prev) => ({ ...prev, leverage: Number(e.target.value) || 1 }))} className="mt-1 w-full bg-slate-900/70 border border-slate-500 rounded-lg px-2 py-1.5 text-slate-100" />
               </label>
-              <label className="text-gray-300">TP (%)
-                <input type="number" min={0.05} step={0.05} value={scalpConfig.tpPercent} onChange={(e) => setScalpConfig((prev) => ({ ...prev, tpPercent: Number(e.target.value) || 0.05 }))} className="mt-1 w-full bg-[#05070a] border border-white/10 rounded-lg px-2 py-1.5 text-white" />
+              <label className="text-slate-200">TP (%)
+                <input type="number" min={0.05} step={0.05} value={scalpConfig.tpPercent} onChange={(e) => setScalpConfig((prev) => ({ ...prev, tpPercent: Number(e.target.value) || 0.05 }))} className="mt-1 w-full bg-slate-900/70 border border-slate-500 rounded-lg px-2 py-1.5 text-slate-100" />
               </label>
-              <label className="text-gray-300">SL (%)
-                <input type="number" min={0.05} step={0.05} value={scalpConfig.slPercent} onChange={(e) => setScalpConfig((prev) => ({ ...prev, slPercent: Number(e.target.value) || 0.05 }))} className="mt-1 w-full bg-[#05070a] border border-white/10 rounded-lg px-2 py-1.5 text-white" />
+              <label className="text-slate-200">SL (%)
+                <input type="number" min={0.05} step={0.05} value={scalpConfig.slPercent} onChange={(e) => setScalpConfig((prev) => ({ ...prev, slPercent: Number(e.target.value) || 0.05 }))} className="mt-1 w-full bg-slate-900/70 border border-slate-500 rounded-lg px-2 py-1.5 text-slate-100" />
               </label>
             </div>
 
@@ -1111,16 +1111,16 @@ export default function BitcoinTradingBot() {
               <button onClick={() => setScalpAutoEnabled((prev) => !prev)} className={`py-2 rounded-lg text-xs font-bold ${scalpAutoEnabled ? 'bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30' : 'bg-amber-500/20 text-amber-200 hover:bg-amber-500/30'}`}>
                 {scalpAutoEnabled ? 'Auto Scalp: ON' : 'Auto Scalp: OFF'}
               </button>
-              <button onClick={() => handleCloseScalpOrder('SCALP ĐÓNG TAY')} disabled={!scalpPosition} className="py-2 rounded-lg bg-white/10 text-gray-200 text-xs font-bold hover:bg-white/20 disabled:opacity-50">Đóng Scalp</button>
+              <button onClick={() => handleCloseScalpOrder('SCALP ĐÓNG TAY')} disabled={!scalpPosition} className="py-2 rounded-lg bg-white/10 text-slate-100 text-xs font-bold hover:bg-white/20 disabled:opacity-50">Đóng Scalp</button>
             </div>
 
             {scalpPosition ? (
-              <div className="text-[11px] rounded-lg border border-white/10 bg-[#05070a]/70 p-2.5 space-y-1">
-                <p className="font-bold text-gray-200">Đang giữ: <span className={scalpPosition.type === 'LONG' ? 'text-emerald-300' : 'text-red-300'}>{scalpPosition.type}</span> @ {scalpPosition.entryPrice.toFixed(2)}</p>
-                <p className="text-gray-400">TP {scalpPosition.tpPrice.toFixed(2)} • SL {scalpPosition.slPrice.toFixed(2)}</p>
+              <div className="text-[11px] rounded-lg border border-white/10 bg-slate-900/60 p-2.5 space-y-1">
+                <p className="font-bold text-slate-100">Đang giữ: <span className={scalpPosition.type === 'LONG' ? 'text-emerald-300' : 'text-red-300'}>{scalpPosition.type}</span> @ {scalpPosition.entryPrice.toFixed(2)}</p>
+                <p className="text-slate-300">TP {scalpPosition.tpPrice.toFixed(2)} • SL {scalpPosition.slPrice.toFixed(2)}</p>
                 <p className={scalpUnrealizedPnl >= 0 ? 'text-emerald-300 font-semibold' : 'text-red-300 font-semibold'}>Floating: {scalpUnrealizedPnl >= 0 ? '+' : ''}{scalpUnrealizedPnl.toFixed(2)} USDT ({scalpUnrealizedRoe.toFixed(2)}%)</p>
               </div>
-            ) : <p className="text-[11px] text-gray-400">Không có lệnh scalp đang mở. Auto scalp sẽ tự vào lệnh khi có tín hiệu.</p>}
+            ) : <p className="text-[11px] text-slate-300">Không có lệnh scalp đang mở. Auto scalp sẽ tự vào lệnh khi có tín hiệu.</p>}
           </div>
         </div>
 
@@ -1128,17 +1128,17 @@ export default function BitcoinTradingBot() {
           <BarChart candles={candles} position={position} />
           <div className="grid grid-cols-1 md:grid-cols-2 gap-5 flex-1">
             <ActivePosition position={position} currentPrice={currentPrice} unrealizedPnl={unrealizedPnl} unrealizedRoe={unrealizedRoe} onCloseOrder={handleCloseOrder} />
-            <div className="bg-[#0d1117]/80 backdrop-blur-xl rounded-2xl border border-white/5 flex flex-col overflow-hidden shadow-xl">
-              <div className="grid grid-cols-3 bg-[#1e2329]/50 border-b border-white/5 p-1 gap-1">
-                <button onClick={() => setActiveTab('LOGS')} className={`min-h-10 px-2 py-2.5 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all flex items-center justify-center gap-1.5 border border-transparent whitespace-nowrap ${activeTab === 'LOGS' ? 'bg-[#0d1117] text-blue-400 shadow-sm border-white/5' : 'text-gray-500 hover:text-gray-300 hover:bg-[#0d1117]/50'}`}><Terminal size={12} /> Console AI</button>
-                <button onClick={() => setActiveTab('HISTORY')} className={`min-h-10 px-2 py-2.5 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all flex items-center justify-center gap-1.5 border border-transparent whitespace-nowrap ${activeTab === 'HISTORY' ? 'bg-[#0d1117] text-yellow-400 shadow-sm border-white/5' : 'text-gray-500 hover:text-gray-300 hover:bg-[#0d1117]/50'}`}><History size={12} /> Winrate: {winRate}%</button>
-                <button onClick={() => setActiveTab('DAILY')} className={`min-h-10 px-2 py-2.5 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all flex items-center justify-center gap-1.5 border border-transparent whitespace-nowrap ${activeTab === 'DAILY' ? 'bg-[#0d1117] text-purple-400 shadow-sm border-white/5' : 'text-gray-500 hover:text-gray-300 hover:bg-[#0d1117]/50'}`}>Ngày</button>
+            <div className="bg-slate-800/80 backdrop-blur-xl rounded-2xl border border-slate-500/50 flex flex-col overflow-hidden shadow-xl">
+              <div className="grid grid-cols-3 bg-slate-800/70 border-b border-slate-500/60 p-1 gap-1">
+                <button onClick={() => setActiveTab('LOGS')} className={`min-h-10 px-2 py-2.5 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all flex items-center justify-center gap-1.5 border border-transparent whitespace-nowrap ${activeTab === 'LOGS' ? 'bg-slate-800 text-sky-300 shadow-sm border-slate-500/60' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/60'}`}><Terminal size={12} /> Console AI</button>
+                <button onClick={() => setActiveTab('HISTORY')} className={`min-h-10 px-2 py-2.5 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all flex items-center justify-center gap-1.5 border border-transparent whitespace-nowrap ${activeTab === 'HISTORY' ? 'bg-slate-800 text-amber-300 shadow-sm border-slate-500/60' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/60'}`}><History size={12} /> Winrate: {winRate}%</button>
+                <button onClick={() => setActiveTab('DAILY')} className={`min-h-10 px-2 py-2.5 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all flex items-center justify-center gap-1.5 border border-transparent whitespace-nowrap ${activeTab === 'DAILY' ? 'bg-slate-800 text-violet-300 shadow-sm border-slate-500/60' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/60'}`}>Ngày</button>
               </div>
-              <div className="flex-1 overflow-y-auto p-3 custom-scrollbar bg-[#05070a]/50 font-mono">
+              <div className="flex-1 overflow-y-auto p-3 custom-scrollbar bg-slate-900/50 font-mono">
                 {activeTab === 'LOGS' ? (
                   <div className="space-y-2">
                     {logs.slice(-15).map((log, i) => (
-                      <div key={i} className={`text-[10px] border-l-[3px] pl-3 py-2 leading-relaxed rounded-r-lg ${log.type === 'success' ? 'border-green-500 text-green-300 bg-green-900/10' : log.type === 'danger' ? 'border-red-500 text-red-300 bg-red-900/10' : log.type === 'analysis' ? 'border-blue-500 text-blue-300 bg-blue-900/10' : 'border-gray-500/50 text-gray-300/70 bg-gray-800/20'}`}><span className="opacity-50 mr-2">[{log.msg.substring(1, 12)}]</span>{log.msg.substring(13)}</div>
+                      <div key={i} className={`text-[10px] border-l-[3px] pl-3 py-2 leading-relaxed rounded-r-lg ${log.type === 'success' ? 'border-green-500 text-green-300 bg-green-900/10' : log.type === 'danger' ? 'border-red-500 text-red-300 bg-red-900/10' : log.type === 'analysis' ? 'border-blue-500 text-blue-300 bg-blue-900/10' : 'border-gray-500/50 text-slate-200/70 bg-gray-800/20'}`}><span className="opacity-50 mr-2">[{log.msg.substring(1, 12)}]</span>{log.msg.substring(13)}</div>
                     ))}
                     <div ref={logsEndRef} />
                   </div>
@@ -1147,8 +1147,8 @@ export default function BitcoinTradingBot() {
                     {history.map((trade) => (
                       <div key={trade.id} className="bg-white/5 p-3 rounded-xl border border-white/5 flex justify-between items-center transition-hover hover:bg-white/10">
                         <div>
-                          <div className={`text-xs font-black uppercase ${trade.type === 'LONG' ? 'text-green-500' : 'text-red-500'}`}>{trade.type} <span className="text-gray-500 text-[9px] ml-1">x{CONFIG.LEVERAGE}</span></div>
-                          <div className="text-[10px] text-gray-300 mt-1 italic opacity-80">{trade.reason}</div>
+                          <div className={`text-xs font-black uppercase ${trade.type === 'LONG' ? 'text-green-500' : 'text-red-500'}`}>{trade.type} <span className="text-slate-400 text-[9px] ml-1">x{CONFIG.LEVERAGE}</span></div>
+                          <div className="text-[10px] text-slate-200 mt-1 italic opacity-80">{trade.reason}</div>
                         </div>
                         <div className="text-right">
                           <div className={`text-sm font-black ${trade.pnl > 0 ? 'text-green-400' : 'text-red-400'}`}>{trade.pnl > 0 ? '+' : ''}{trade.pnl.toFixed(2)} USDT</div>
@@ -1163,23 +1163,23 @@ export default function BitcoinTradingBot() {
                       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3"> 
                         <p className="text-xs font-bold text-purple-300">Backtest nhanh (Binance {CONFIG.SYMBOL})</p>
                         <div className="flex flex-col sm:flex-row gap-2">
-                          <button onClick={() => { setBacktestDate(new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().split('T')[0]); setBacktestDays(7); }} className="w-full sm:w-auto px-3 py-2 rounded-lg bg-white/10 text-gray-200 text-xs font-bold hover:bg-white/20">Hôm qua + 7 ngày</button>
+                          <button onClick={() => { setBacktestDate(new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().split('T')[0]); setBacktestDays(7); }} className="w-full sm:w-auto px-3 py-2 rounded-lg bg-white/10 text-slate-100 text-xs font-bold hover:bg-white/20">Hôm qua + 7 ngày</button>
                           <button onClick={runQuickBacktest} disabled={backtestLoading} className="w-full sm:w-auto px-3 py-2 rounded-lg bg-purple-500/20 text-purple-200 text-xs font-bold hover:bg-purple-500/30 disabled:opacity-50">{backtestLoading ? 'Đang chạy...' : 'Chạy backtest'}</button>
                         </div>
                       </div>
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2"> 
-                        <label className="text-[11px] text-gray-300 flex flex-col gap-1">
+                        <label className="text-[11px] text-slate-200 flex flex-col gap-1">
                           Ngày kết thúc
-                          <input type="date" value={backtestDate} onChange={(e) => setBacktestDate(e.target.value)} max={new Date().toISOString().split('T')[0]} className="bg-[#05070a] border border-white/10 rounded-lg px-2.5 py-2 text-[11px] text-white focus:outline-none focus:border-purple-400" />
+                          <input type="date" value={backtestDate} onChange={(e) => setBacktestDate(e.target.value)} max={new Date().toISOString().split('T')[0]} className="bg-slate-900/70 border border-slate-500 rounded-lg px-2.5 py-2 text-[11px] text-slate-100 focus:outline-none focus:border-violet-400" />
                         </label>
-                        <label className="text-[11px] text-gray-300 flex flex-col gap-1">
+                        <label className="text-[11px] text-slate-200 flex flex-col gap-1">
                           Số ngày lịch sử
-                          <input type="number" min={1} max={30} value={backtestDays} onChange={(e) => setBacktestDays(Number(e.target.value) || 1)} className="bg-[#05070a] border border-white/10 rounded-lg px-2.5 py-2 text-[11px] text-white focus:outline-none focus:border-purple-400" />
+                          <input type="number" min={1} max={30} value={backtestDays} onChange={(e) => setBacktestDays(Number(e.target.value) || 1)} className="bg-slate-900/70 border border-slate-500 rounded-lg px-2.5 py-2 text-[11px] text-slate-100 focus:outline-none focus:border-violet-400" />
                         </label>
                       </div>
                       {backtestResult ? (
                         <div className="space-y-3">
-                          <div className="grid grid-cols-2 gap-2 text-[11px] text-gray-200"> 
+                          <div className="grid grid-cols-2 gap-2 text-[11px] text-slate-100"> 
                             <p>Tổng lệnh: <b>{backtestResult.totalTrades}</b></p>
                             <p>Win rate: <b>{backtestResult.winRate.toFixed(1)}%</b></p>
                             <p>PnL: <b className={backtestResult.netPnl >= 0 ? 'text-emerald-300' : 'text-red-300'}>{backtestResult.netPnl.toFixed(2)} USDT</b></p>
@@ -1187,18 +1187,18 @@ export default function BitcoinTradingBot() {
                             <p>Expectancy: <b>{backtestResult.expectancy.toFixed(2)}</b></p>
                             <p>Max DD: <b>{backtestResult.maxDrawdownPercent.toFixed(2)}%</b></p>
                           </div>
-                          <div className="rounded-lg border border-white/10 bg-[#05070a]/70 p-2.5">
+                          <div className="rounded-lg border border-slate-600/70 bg-slate-900/60 p-2.5">
                             <p className="text-[11px] font-bold text-purple-200 mb-2">Gợi ý tối ưu</p>
                             <ul className="space-y-1.5">
                               {getBacktestSuggestions(backtestResult).map((tip, idx) => (
-                                <li key={idx} className={`text-[11px] ${tip.level === 'good' ? 'text-emerald-300' : tip.level === 'warning' ? 'text-amber-200' : 'text-gray-300'}`}>
+                                <li key={idx} className={`text-[11px] ${tip.level === 'good' ? 'text-emerald-300' : tip.level === 'warning' ? 'text-amber-200' : 'text-slate-200'}`}>
                                   • {tip.text}
                                 </li>
                               ))}
                             </ul>
                           </div>
                         </div>
-                      ) : <p className="text-[11px] text-gray-400">Bấm “Chạy backtest” để xem hiệu suất nhanh trên dữ liệu nến lịch sử.</p>}
+                      ) : <p className="text-[11px] text-slate-300">Bấm “Chạy backtest” để xem hiệu suất nhanh trên dữ liệu nến lịch sử.</p>}
                     </div>
                   </div>
                 )}

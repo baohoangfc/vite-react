@@ -34,9 +34,9 @@ function App() {
   }, [])
 
   return (
-    <div className="relative w-full min-h-screen bg-[#0b0e11]">
+    <div className="relative w-full min-h-screen bg-gradient-to-b from-slate-900 via-slate-800 to-slate-900 text-slate-100">
       <div className="pointer-events-none fixed left-0 right-0 top-0 z-50 px-4 pt-4">
-        <div className="mx-auto max-w-6xl rounded-lg border border-slate-700 bg-slate-900/80 p-3 text-sm text-slate-200 backdrop-blur">
+        <div className="mx-auto max-w-6xl rounded-lg border border-slate-500/70 bg-slate-900/75 p-3 text-sm text-slate-100 shadow-lg shadow-slate-950/30 backdrop-blur">
           {backend ? (
             <p>
               Backend connected: <strong>{backend.service}</strong> ({backend.status})
