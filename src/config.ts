@@ -1,3 +1,15 @@
+const getApiUrl = () => {
+    if (typeof process !== 'undefined' && process.env && process.env.VITE_API_URL) {
+        return process.env.VITE_API_URL;
+    }
+    try {
+        // @ts-ignore
+        return import.meta.env.VITE_API_URL || 'https://exus-bot-backend.onrender.com';
+    } catch (e) {
+        return 'https://exus-bot-backend.onrender.com';
+    }
+};
+
 export const CONFIG = {
     SYMBOL: 'BTCUSDT',
     INTERVAL: '1m',
@@ -35,7 +47,7 @@ export const CONFIG = {
     COOLDOWN_MS: 60 * 1000,
     ALERT_DRAWDOWN_PERCENT: 5,
     ALERT_DAILY_SUMMARY_MS: 24 * 60 * 60 * 1000,
-    API_URL: import.meta.env.VITE_API_URL || 'https://exus-bot-backend.onrender.com',
+    API_URL: getApiUrl(),
 };
 
 export const getSafeAppId = () => {
