@@ -27,6 +27,7 @@ import WalletManager from './components/Dashboard/WalletManager';
 import ActivePosition from './components/Dashboard/ActivePosition';
 import DailyAggregation from './components/Dashboard/DailyAggregation';
 import SentimentIndicators from './components/Dashboard/SentimentIndicators';
+import { BacktestResult, runBacktest } from './utils/backtest';
 
 export default function BitcoinTradingBot() {
   if (!isFirebaseConfigured) return <SetupScreen />;
@@ -49,6 +50,16 @@ export default function BitcoinTradingBot() {
   const [logs, setLogs] = useState<{ msg: string, type: string }[]>([]);
   const [activeTab, setActiveTab] = useState<'LOGS' | 'HISTORY' | 'DAILY'>('LOGS');
   const [showSettings, setShowSettings] = useState(false);
+  const [backtestResult, setBacktestResult] = useState<BacktestResult | null>(null);
+  const [backtestLoading, setBacktestLoading] = useState(false);
+  const [runtimeOnline, setRuntimeOnline] = useState(false);
+  const [backtestFromDate, setBacktestFromDate] = useState(() => {
+    const from = new Date();
+    from.setDate(from.getDate() - 7);
+    return from.toISOString().slice(0, 10);
+  });
+  const [backtestToDate, setBacktestToDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [backtestRangeLabel, setBacktestRangeLabel] = useState('7 ngày gần nhất');
 
   // Trading State (Cloud Synced)
   const [account, setAccount] = useState<Account>({ balance: CONFIG.INITIAL_BALANCE, pnlHistory: 0 });
@@ -68,6 +79,8 @@ export default function BitcoinTradingBot() {
   const candlesRef = useRef(candles); // Added for processAndSetData
   const sentimentRef = useRef(sentiment); // Added for processAndSetData
   const isTradingActive = useRef(isRunning); // Added for processAndSetData
+  const drawdownAlertSentRef = useRef(false);
+  const lastDailySummaryRef = useRef(0);
 
   // Sync refs
   useEffect(() => { tgConfigRef.current = tgConfig; }, [tgConfig]);
@@ -130,6 +143,95 @@ export default function BitcoinTradingBot() {
     try { await fetch(`https://api.telegram.org/bot${token}/sendMessage`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'HTML' }) }); } catch (e) { }
   };
 
+
+  const syncRuntimeState = async (running: boolean) => {
+    try {
+      const response = await fetch('/api/runtime', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          isRunning: running,
+          token: tgConfigRef.current.token,
+          chatId: tgConfigRef.current.chatId,
+          symbol: CONFIG.SYMBOL,
+          heartbeatMs: CONFIG.HEARTBEAT_MS,
+        }),
+      });
+      setRuntimeOnline(response.ok);
+    } catch (error) {
+      setRuntimeOnline(false);
+    }
+  };
+
+  const handleToggleRunning = () => {
+    const nextRunning = !isRunning;
+    setIsRunning(nextRunning);
+    syncRuntimeState(nextRunning);
+  };
+
+  const runQuickBacktest = async () => {
+    setBacktestLoading(true);
+    try {
+      const startTime = new Date(`${backtestFromDate}T00:00:00.000Z`).getTime();
+      const endTime = new Date(`${backtestToDate}T23:59:59.999Z`).getTime();
+
+      if (!Number.isFinite(startTime) || !Number.isFinite(endTime) || startTime >= endTime) {
+        addLog('Khoảng ngày backtest không hợp lệ.', 'danger');
+        return;
+      }
+
+      let cursor = startTime;
+      const allRows: any[] = [];
+      const maxLoops = 40;
+
+      for (let i = 0; i < maxLoops && cursor < endTime; i++) {
+        const res = await fetch(
+          `https://api.binance.com/api/v3/klines?symbol=${CONFIG.SYMBOL}&interval=${CONFIG.INTERVAL}&startTime=${cursor}&endTime=${endTime}&limit=1000`,
+        );
+        if (!res.ok) throw new Error('Không tải được dữ liệu lịch sử');
+
+        const rows = await res.json();
+        if (!Array.isArray(rows) || rows.length === 0) break;
+
+        allRows.push(...rows);
+        cursor = Number(rows[rows.length - 1][0]) + 1;
+      }
+
+      const uniq = new Map<number, any>();
+      allRows.forEach((k) => uniq.set(Number(k[0]), k));
+      const sortedRows = [...uniq.values()].sort((a, b) => Number(a[0]) - Number(b[0]));
+
+      const formattedCandles: Candle[] = sortedRows.map((k: any) => ({
+        time: Number(k[0]),
+        open: parseFloat(k[1]),
+        high: parseFloat(k[2]),
+        low: parseFloat(k[3]),
+        close: parseFloat(k[4]),
+        volume: parseFloat(k[5]),
+        isGreen: parseFloat(k[4]) >= parseFloat(k[1]),
+      }));
+
+      if (formattedCandles.length < CONFIG.EMA_PERIOD + 5) {
+        addLog('Không đủ dữ liệu trong khoảng ngày đã chọn để chạy backtest.', 'warning');
+        setBacktestResult(null);
+        return;
+      }
+
+      const result = runBacktest(formattedCandles);
+      const rangeLabel = `${backtestFromDate} → ${backtestToDate}`;
+      setBacktestRangeLabel(rangeLabel);
+      setBacktestResult(result);
+      addLog(
+        `Backtest (${rangeLabel}) hoàn tất: ${result.totalTrades} lệnh, WR ${result.winRate.toFixed(1)}%, PnL ${result.netPnl.toFixed(2)} USDT`,
+        'info',
+      );
+    } catch (error: any) {
+      addLog(`Lỗi backtest: ${error?.message || 'Không thể tải dữ liệu'}`, 'danger');
+    } finally {
+      setBacktestLoading(false);
+    }
+  };
+
   // Telegram Heartbeat
   useEffect(() => {
     if (!isRunning || !user) return;
@@ -147,6 +249,67 @@ export default function BitcoinTradingBot() {
       sendTelegram(`🔴 <b>HỆ THỐNG ĐÃ DỪNG</b>\n• Bot đã ngừng quét thị trường.`);
     };
   }, [isRunning, user]);
+
+  useEffect(() => {
+    const syncInitialRuntime = async () => {
+      try {
+        const response = await fetch('/api/runtime');
+        if (!response.ok) return;
+        const data = await response.json();
+        setRuntimeOnline(Boolean(data.background));
+        if (typeof data.isRunning === 'boolean') setIsRunning(data.isRunning);
+      } catch (error) {
+        setRuntimeOnline(false);
+      }
+    };
+
+    syncInitialRuntime();
+  }, []);
+
+  useEffect(() => {
+    if (!isRunning) {
+      drawdownAlertSentRef.current = false;
+      return;
+    }
+
+    const floatingPnl = position ? (position.type === 'LONG' ? (currentPrice - position.entryPrice) * (position.size / position.entryPrice) : (position.entryPrice - currentPrice) * (position.size / position.entryPrice)) : 0;
+    const equity = account.balance + floatingPnl;
+    const base = Math.max(CONFIG.INITIAL_BALANCE, 1);
+    const drawdownPercent = Math.max(0, ((base - equity) / base) * 100);
+
+    if (drawdownPercent >= CONFIG.ALERT_DRAWDOWN_PERCENT && !drawdownAlertSentRef.current) {
+      drawdownAlertSentRef.current = true;
+      sendTelegram(`⚠️ <b>CẢNH BÁO DRAWDOWN</b>\n• Drawdown: ${drawdownPercent.toFixed(2)}%\n• Equity: ${equity.toFixed(2)} USDT`);
+      addLog(`Cảnh báo drawdown ${drawdownPercent.toFixed(2)}% đã gửi Telegram.`, 'warning');
+    }
+
+    if (drawdownPercent < CONFIG.ALERT_DRAWDOWN_PERCENT * 0.7) {
+      drawdownAlertSentRef.current = false;
+    }
+  }, [isRunning, account.balance, position, currentPrice]);
+
+  useEffect(() => {
+    if (!isRunning) return;
+
+    const sendDailySummary = () => {
+      const now = Date.now();
+      if (now - lastDailySummaryRef.current < CONFIG.ALERT_DAILY_SUMMARY_MS) return;
+      lastDailySummaryRef.current = now;
+
+      const winTrades = history.filter((t) => t.pnl > 0).length;
+      const totalTrades = history.length;
+      const winRate = totalTrades > 0 ? (winTrades / totalTrades) * 100 : 0;
+
+      sendTelegram(
+        `📊 <b>BÁO CÁO NGÀY BOT</b>\n• Số lệnh: ${totalTrades}\n• Win rate: ${winRate.toFixed(1)}%\n• PnL tích luỹ: ${account.pnlHistory.toFixed(2)} USDT\n• Số dư: ${account.balance.toFixed(2)} USDT`,
+      );
+      addLog('Đã gửi báo cáo ngày Telegram.', 'info');
+    };
+
+    sendDailySummary();
+    const summaryTimer = setInterval(sendDailySummary, 60 * 1000);
+    return () => clearInterval(summaryTimer);
+  }, [isRunning, history, account.pnlHistory, account.balance]);
 
   const fetchMTFData = async () => {
     try {
@@ -451,6 +614,9 @@ export default function BitcoinTradingBot() {
               <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2 sm:gap-3 text-[10px] sm:text-[11px] text-gray-400 mt-2 sm:mt-1 font-medium">
                 <span className="flex items-center gap-1"><Layers size={12} /> SMC Engine</span>
                 <span className="border-l border-gray-700 pl-2 sm:pl-3 text-blue-400 font-bold tracking-widest uppercase">LEV x{CONFIG.LEVERAGE}</span>
+                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${runtimeOnline ? 'bg-emerald-500/20 text-emerald-300' : 'bg-amber-500/20 text-amber-200'}`}>
+                  {runtimeOnline ? 'Background ON' : 'Background OFF'}
+                </span>
                 <button onClick={() => setShowSettings(true)} className="ml-0 sm:ml-2 hover:text-white transition-colors underline decoration-gray-700 underline-offset-2">Telegram</button>
                 <button onClick={() => signOut(auth)} className="text-red-400 hover:text-red-300 transition-colors ml-0 sm:ml-2">Đăng xuất</button>
               </div>
@@ -461,7 +627,7 @@ export default function BitcoinTradingBot() {
               <p className="text-[10px] text-gray-500 font-bold tracking-widest uppercase mb-1">BTC/USDT M1</p>
               <p className={`text-2xl sm:text-3xl font-mono font-black tracking-tighter ${candles.length > 0 && currentPrice >= candles[candles.length - 1].open ? 'text-[#0ecb81] drop-shadow-[0_0_8px_#0ecb8140]' : 'text-[#f6465d] drop-shadow-[0_0_8px_#f6465d40]'}`}>{currentPrice.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
             </div>
-            <button onClick={() => setIsRunning(!isRunning)} className={`flex items-center justify-center gap-2 w-full sm:w-36 py-3.5 rounded-xl font-black uppercase tracking-widest transition-all shadow-lg active:scale-95 border ${isRunning ? 'bg-red-500/10 text-red-500 border-red-500/30 hover:bg-red-500/20' : 'bg-green-500 text-[#05070a] border-green-400 hover:bg-green-400 shadow-green-500/20'}`}>
+            <button onClick={handleToggleRunning} className={`flex items-center justify-center gap-2 w-full sm:w-36 py-3.5 rounded-xl font-black uppercase tracking-widest transition-all shadow-lg active:scale-95 border ${isRunning ? 'bg-red-500/10 text-red-500 border-red-500/30 hover:bg-red-500/20' : 'bg-green-500 text-[#05070a] border-green-400 hover:bg-green-400 shadow-green-500/20'}`}>
               {isRunning ? <><Pause size={16} fill="currentColor" /> NGỪNG</> : <><Play size={16} fill="currentColor" /> KHỞI ĐỘNG</>}
             </button>
           </div>
@@ -477,7 +643,7 @@ export default function BitcoinTradingBot() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-5 flex-1">
             <ActivePosition position={position} currentPrice={currentPrice} unrealizedPnl={unrealizedPnl} unrealizedRoe={unrealizedRoe} onCloseOrder={handleCloseOrder} />
             <div className="bg-[#0d1117]/80 backdrop-blur-xl rounded-2xl border border-white/5 flex flex-col overflow-hidden shadow-xl">
-              <div className="flex bg-[#1e2329]/50 border-b border-white/5 p-1">
+              <div className="grid grid-cols-3 gap-1 bg-[#1e2329]/50 border-b border-white/5 p-1">
                 <button onClick={() => setActiveTab('LOGS')} className={`flex-1 py-2.5 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all flex items-center justify-center gap-1.5 ${activeTab === 'LOGS' ? 'bg-[#0d1117] text-blue-400 shadow-sm border border-white/5' : 'text-gray-500 hover:text-gray-300'}`}><Terminal size={12} /> Console AI</button>
                 <button onClick={() => setActiveTab('HISTORY')} className={`flex-1 py-2.5 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all flex items-center justify-center gap-1.5 ${activeTab === 'HISTORY' ? 'bg-[#0d1117] text-yellow-400 shadow-sm border border-white/5' : 'text-gray-500 hover:text-gray-300'}`}><History size={12} /> Winrate: {winRate}%</button>
                 <button onClick={() => setActiveTab('DAILY')} className={`flex-1 py-2.5 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all flex items-center justify-center gap-1.5 ${activeTab === 'DAILY' ? 'bg-[#0d1117] text-purple-400 shadow-sm border border-white/5' : 'text-gray-500 hover:text-gray-300'}`}>Ngày</button>
@@ -505,7 +671,40 @@ export default function BitcoinTradingBot() {
                     ))}
                   </div>
                 ) : (
-                  <DailyAggregation history={history} />
+                  <div className="space-y-3"> 
+                    <DailyAggregation history={history} />
+                    <div className="bg-white/5 border border-white/10 rounded-xl p-3 space-y-3">
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                        <p className="text-xs font-bold text-purple-300">Backtest lịch sử ({CONFIG.SYMBOL})</p>
+                        <button onClick={runQuickBacktest} disabled={backtestLoading} className="w-full sm:w-auto px-3 py-2 rounded-lg bg-purple-500/20 text-purple-200 text-xs font-bold hover:bg-purple-500/30 disabled:opacity-50">{backtestLoading ? 'Đang chạy...' : 'Chạy backtest'}</button>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px]">
+                        <label className="text-gray-300 space-y-1">
+                          <span className="block text-[10px] uppercase tracking-wider text-gray-400">Từ ngày</span>
+                          <input type="date" value={backtestFromDate} onChange={(e) => setBacktestFromDate(e.target.value)} className="w-full bg-[#05070a] border border-white/10 rounded-lg px-2 py-1.5 text-gray-200" />
+                        </label>
+                        <label className="text-gray-300 space-y-1">
+                          <span className="block text-[10px] uppercase tracking-wider text-gray-400">Đến ngày</span>
+                          <input type="date" value={backtestToDate} onChange={(e) => setBacktestToDate(e.target.value)} className="w-full bg-[#05070a] border border-white/10 rounded-lg px-2 py-1.5 text-gray-200" />
+                        </label>
+                      </div>
+
+                      {backtestResult ? (
+                        <>
+                          <p className="text-[10px] text-gray-400">Khoảng test: {backtestRangeLabel}</p>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px] text-gray-200">
+                            <p>Tổng lệnh: <b>{backtestResult.totalTrades}</b></p>
+                            <p>Win rate: <b>{backtestResult.winRate.toFixed(1)}%</b></p>
+                            <p>PnL: <b className={backtestResult.netPnl >= 0 ? 'text-emerald-300' : 'text-red-300'}>{backtestResult.netPnl.toFixed(2)} USDT</b></p>
+                            <p>Profit factor: <b>{Number.isFinite(backtestResult.profitFactor) ? backtestResult.profitFactor.toFixed(2) : '∞'}</b></p>
+                            <p>Expectancy: <b>{backtestResult.expectancy.toFixed(2)}</b></p>
+                            <p>Max DD: <b>{backtestResult.maxDrawdownPercent.toFixed(2)}%</b></p>
+                          </div>
+                        </>
+                      ) : <p className="text-[11px] text-gray-400">Chọn khoảng ngày quá khứ rồi bấm “Chạy backtest” để xem hiệu suất.</p>}
+                    </div>
+                  </div>
                 )}
               </div>
             </div>
