@@ -46,6 +46,13 @@ type PendingSetup = {
   createdAt: number;
 };
 
+type ScalpConfig = {
+  margin: number;
+  leverage: number;
+  tpPercent: number;
+  slPercent: number;
+};
+
 const RISK_PER_TRADE = 0.01;
 const DAILY_LOSS_LIMIT = 0.03;
 const RR_TARGET = 3;
@@ -55,6 +62,7 @@ const LTF_MINUTES = 15;
 const SWEEP_LOOKBACK = 20;
 const BOS_LOOKBACK = 8;
 const EQUAL_TOLERANCE_BPS = 0.0008;
+const SCALP_COOLDOWN_MS = 90_000;
 
 const aggregateCandles = (candles: Candle[], intervalMinutes: number): Candle[] => {
   if (!candles.length) return [];
@@ -256,6 +264,10 @@ export default function BitcoinTradingBot() {
   const [backtestDate, setBacktestDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [backtestDays, setBacktestDays] = useState(3);
   const [runtimeOnline, setRuntimeOnline] = useState(false);
+  const [scalpConfig, setScalpConfig] = useState<ScalpConfig>({ margin: 50, leverage: 20, tpPercent: 0.35, slPercent: 0.2 });
+  const [scalpAutoEnabled, setScalpAutoEnabled] = useState(true);
+  const [scalpPosition, setScalpPosition] = useState<Position | null>(null);
+  const [scalpHistory, setScalpHistory] = useState<TradeHistoryItem[]>([]);
 
   // Trading State (Cloud Synced)
   const [account, setAccount] = useState<Account>({ balance: CONFIG.INITIAL_BALANCE, pnlHistory: 0 });
@@ -279,6 +291,8 @@ export default function BitcoinTradingBot() {
   const lastDailySummaryRef = useRef(0);
   const pendingSetupRef = useRef<PendingSetup | null>(null);
   const dayTrackerRef = useRef<{ dayKey: string; startBalance: number; realizedPnl: number }>({ dayKey: '', startBalance: 0, realizedPnl: 0 });
+  const scalpPositionRef = useRef<Position | null>(null);
+  const lastScalpSignalRef = useRef(0);
 
   // Sync refs
   useEffect(() => { tgConfigRef.current = tgConfig; }, [tgConfig]);
@@ -289,6 +303,7 @@ export default function BitcoinTradingBot() {
   useEffect(() => { candlesRef.current = candles; }, [candles]); // Added
   useEffect(() => { sentimentRef.current = sentiment; }, [sentiment]); // Added
   useEffect(() => { isTradingActive.current = isRunning && !runtimeOnline; }, [isRunning, runtimeOnline]); // Added
+  useEffect(() => { scalpPositionRef.current = scalpPosition; }, [scalpPosition]);
 
   // Auth Init
   useEffect(() => {
@@ -897,8 +912,116 @@ export default function BitcoinTradingBot() {
     }
   };
 
+  const handleOpenScalpOrder = (type: TradeSide, setup: string) => {
+    if (scalpPositionRef.current) {
+      addLog('SCALP đang có lệnh mở, hãy đóng lệnh trước khi vào lệnh mới.', 'warning');
+      return;
+    }
+
+    const entryPrice = latestPriceRef.current || currentPrice;
+    if (!entryPrice) {
+      addLog('Không thể mở SCALP: chưa có giá thị trường.', 'danger');
+      return;
+    }
+
+    const leverage = Math.max(1, scalpConfig.leverage);
+    const margin = Math.max(1, scalpConfig.margin);
+    const size = margin * leverage;
+    const fee = size * CONFIG.FEE;
+
+    const tpDistance = Math.max(0.01, entryPrice * (Math.max(0.05, scalpConfig.tpPercent) / 100));
+    const slDistance = Math.max(0.01, entryPrice * (Math.max(0.05, scalpConfig.slPercent) / 100));
+    const tpPrice = type === 'LONG' ? entryPrice + tpDistance : entryPrice - tpDistance;
+    const slPrice = type === 'LONG' ? entryPrice - slDistance : entryPrice + slDistance;
+
+    const details: Position = {
+      type,
+      entryPrice,
+      margin,
+      size,
+      tpPrice,
+      slPrice,
+      liquidationPrice: type === 'LONG' ? entryPrice * (1 - 1 / leverage) : entryPrice * (1 + 1 / leverage),
+      openFee: fee,
+      openTime: Date.now(),
+      signalDetail: {
+        setup,
+        leverage,
+      },
+    };
+
+    setScalpPosition(details);
+    lastScalpSignalRef.current = Date.now();
+    addLog(`SCALP ${type} @ ${entryPrice.toFixed(2)} | TP ${tpPrice.toFixed(2)} | SL ${slPrice.toFixed(2)} [${setup}]`, 'success');
+    sendTelegram(`⚡ <b>SCALP ${type}</b>\n• Setup: ${setup}\n• Entry: ${entryPrice.toFixed(2)}\n• TP: ${tpPrice.toFixed(2)}\n• SL: ${slPrice.toFixed(2)}\n• Margin: ${margin} USDT\n• Lev: x${leverage}`);
+  };
+
+  const handleCloseScalpOrder = (reason: string) => {
+    const activeScalp = scalpPositionRef.current;
+    if (!activeScalp) return;
+
+    const exitPrice = latestPriceRef.current || currentPrice;
+    const pnlRaw = activeScalp.type === 'LONG'
+      ? (exitPrice - activeScalp.entryPrice) * (activeScalp.size / activeScalp.entryPrice)
+      : (activeScalp.entryPrice - exitPrice) * (activeScalp.size / activeScalp.entryPrice);
+    const closeFee = activeScalp.size * CONFIG.FEE;
+    const finalPnl = pnlRaw - closeFee - activeScalp.openFee;
+
+    const trade: TradeHistoryItem = {
+      id: `scalp-${Date.now()}`,
+      type: activeScalp.type,
+      entryPrice: activeScalp.entryPrice,
+      exitPrice,
+      pnl: finalPnl,
+      pnlPercent: (finalPnl / activeScalp.margin) * 100,
+      reason,
+      time: Date.now(),
+      signalDetail: activeScalp.signalDetail,
+    };
+
+    setScalpHistory((prev) => [trade, ...prev].slice(0, 25));
+    setScalpPosition(null);
+    addLog(`SCALP ĐÓNG ${activeScalp.type} (${reason}): ${finalPnl > 0 ? '+' : ''}${finalPnl.toFixed(2)} USDT`, finalPnl >= 0 ? 'success' : 'danger');
+    sendTelegram(`${finalPnl >= 0 ? '✅' : '❌'} <b>SCALP ĐÓNG ${activeScalp.type}</b>\n• Lý do: ${reason}\n• PnL: ${finalPnl > 0 ? '+' : ''}${finalPnl.toFixed(2)} USDT`);
+  };
+
+  useEffect(() => {
+    if (!scalpPosition) return;
+    const hitTp = scalpPosition.type === 'LONG' ? currentPrice >= scalpPosition.tpPrice : currentPrice <= scalpPosition.tpPrice;
+    const hitSl = scalpPosition.type === 'LONG' ? currentPrice <= scalpPosition.slPrice : currentPrice >= scalpPosition.slPrice;
+
+    if (hitTp) handleCloseScalpOrder('SCALP TAKE PROFIT');
+    else if (hitSl) handleCloseScalpOrder('SCALP STOP LOSS');
+  }, [currentPrice, scalpPosition]);
+
+  useEffect(() => {
+    if (!scalpAutoEnabled || scalpPosition) return;
+    if (candles.length < Math.max(CONFIG.EMA_PERIOD, CONFIG.RSI_PERIOD) + 5) return;
+    if (Date.now() - lastScalpSignalRef.current < SCALP_COOLDOWN_MS) return;
+
+    const closes = candles.map((c) => c.close);
+    const volumes = candles.map((c) => c.volume);
+    const last = candles[candles.length - 1];
+    const emaSeries = calculateZLEMA(closes, CONFIG.EMA_PERIOD);
+    const ema = emaSeries[emaSeries.length - 1];
+    const rsi = calculateRSI(closes, CONFIG.RSI_PERIOD);
+    const macd = getMACD(closes);
+    const volSma = calculateSMA(volumes, 20);
+
+    if (!ema || !volSma || last.volume < volSma * 1.1) return;
+
+    const longSignal = last.close > ema && rsi > 53 && macd.hist > 0;
+    const shortSignal = last.close < ema && rsi < 47 && macd.hist < 0;
+
+    if (longSignal) handleOpenScalpOrder('LONG', 'SCALP_AUTO_EMA_RSI_MACD');
+    else if (shortSignal) handleOpenScalpOrder('SHORT', 'SCALP_AUTO_EMA_RSI_MACD');
+  }, [candles, scalpAutoEnabled, scalpPosition]);
+
   const unrealizedPnl = position ? (position.type === 'LONG' ? (currentPrice - position.entryPrice) * (position.size / position.entryPrice) : (position.entryPrice - currentPrice) * (position.size / position.entryPrice)) : 0;
   const unrealizedRoe = position ? (unrealizedPnl / position.margin) * 100 : 0;
+  const scalpUnrealizedPnl = scalpPosition ? (scalpPosition.type === 'LONG' ? (currentPrice - scalpPosition.entryPrice) * (scalpPosition.size / scalpPosition.entryPrice) : (scalpPosition.entryPrice - currentPrice) * (scalpPosition.size / scalpPosition.entryPrice)) : 0;
+  const scalpUnrealizedRoe = scalpPosition ? (scalpUnrealizedPnl / scalpPosition.margin) * 100 : 0;
+  const scalpTotalPnl = scalpHistory.reduce((sum, trade) => sum + trade.pnl, 0);
 
   const winTrades = history.filter(t => t.pnl > 0).length;
   const winRate = history.length > 0 ? ((winTrades / history.length) * 100).toFixed(1) : 0;
@@ -963,6 +1086,42 @@ export default function BitcoinTradingBot() {
         <div className="lg:col-span-4 space-y-5 w-full">
           <MarketRadar analysis={analysis} />
           <WalletManager account={account} position={position} unrealizedPnl={unrealizedPnl} />
+          <div className="bg-[#0d1117]/80 backdrop-blur-xl rounded-2xl border border-white/5 p-4 shadow-xl space-y-3">
+            <div className="flex items-center justify-between">
+              <h3 className="text-xs font-black tracking-widest uppercase text-orange-300">Scalp độc lập</h3>
+              <span className="text-[10px] text-gray-400">PnL: <b className={scalpTotalPnl >= 0 ? 'text-emerald-300' : 'text-red-300'}>{scalpTotalPnl.toFixed(2)} USDT</b></span>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 text-[11px]">
+              <label className="text-gray-300">Margin (USDT)
+                <input type="number" min={1} value={scalpConfig.margin} onChange={(e) => setScalpConfig((prev) => ({ ...prev, margin: Number(e.target.value) || 1 }))} className="mt-1 w-full bg-[#05070a] border border-white/10 rounded-lg px-2 py-1.5 text-white" />
+              </label>
+              <label className="text-gray-300">Leverage
+                <input type="number" min={1} max={100} value={scalpConfig.leverage} onChange={(e) => setScalpConfig((prev) => ({ ...prev, leverage: Number(e.target.value) || 1 }))} className="mt-1 w-full bg-[#05070a] border border-white/10 rounded-lg px-2 py-1.5 text-white" />
+              </label>
+              <label className="text-gray-300">TP (%)
+                <input type="number" min={0.05} step={0.05} value={scalpConfig.tpPercent} onChange={(e) => setScalpConfig((prev) => ({ ...prev, tpPercent: Number(e.target.value) || 0.05 }))} className="mt-1 w-full bg-[#05070a] border border-white/10 rounded-lg px-2 py-1.5 text-white" />
+              </label>
+              <label className="text-gray-300">SL (%)
+                <input type="number" min={0.05} step={0.05} value={scalpConfig.slPercent} onChange={(e) => setScalpConfig((prev) => ({ ...prev, slPercent: Number(e.target.value) || 0.05 }))} className="mt-1 w-full bg-[#05070a] border border-white/10 rounded-lg px-2 py-1.5 text-white" />
+              </label>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              <button onClick={() => setScalpAutoEnabled((prev) => !prev)} className={`py-2 rounded-lg text-xs font-bold ${scalpAutoEnabled ? 'bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30' : 'bg-amber-500/20 text-amber-200 hover:bg-amber-500/30'}`}>
+                {scalpAutoEnabled ? 'Auto Scalp: ON' : 'Auto Scalp: OFF'}
+              </button>
+              <button onClick={() => handleCloseScalpOrder('SCALP ĐÓNG TAY')} disabled={!scalpPosition} className="py-2 rounded-lg bg-white/10 text-gray-200 text-xs font-bold hover:bg-white/20 disabled:opacity-50">Đóng Scalp</button>
+            </div>
+
+            {scalpPosition ? (
+              <div className="text-[11px] rounded-lg border border-white/10 bg-[#05070a]/70 p-2.5 space-y-1">
+                <p className="font-bold text-gray-200">Đang giữ: <span className={scalpPosition.type === 'LONG' ? 'text-emerald-300' : 'text-red-300'}>{scalpPosition.type}</span> @ {scalpPosition.entryPrice.toFixed(2)}</p>
+                <p className="text-gray-400">TP {scalpPosition.tpPrice.toFixed(2)} • SL {scalpPosition.slPrice.toFixed(2)}</p>
+                <p className={scalpUnrealizedPnl >= 0 ? 'text-emerald-300 font-semibold' : 'text-red-300 font-semibold'}>Floating: {scalpUnrealizedPnl >= 0 ? '+' : ''}{scalpUnrealizedPnl.toFixed(2)} USDT ({scalpUnrealizedRoe.toFixed(2)}%)</p>
+              </div>
+            ) : <p className="text-[11px] text-gray-400">Không có lệnh scalp đang mở. Auto scalp sẽ tự vào lệnh khi có tín hiệu.</p>}
+          </div>
         </div>
 
         <div className="lg:col-span-8 space-y-5 w-full flex flex-col h-full">
