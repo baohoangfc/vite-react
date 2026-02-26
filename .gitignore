@@ -25,3 +25,5 @@ dist-ssr
 
 # Backend runtime persistence
 .runtime-state.json
+
+service-account.json
