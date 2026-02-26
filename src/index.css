@@ -7,7 +7,7 @@
   line-height: 1.5;
   font-weight: 400;
   color-scheme: dark;
-  background-color: #0b0e11;
+  background: radial-gradient(circle at top, #172554 0%, #0f172a 35%, #020617 100%);
 }
 
 body {
@@ -16,6 +16,8 @@ body {
   place-items: start;
   min-width: 320px;
   min-height: 100vh;
+  color: #e2e8f0;
+  background: #020617;
 }
 
 /* Custom scrollbar cho Nhật ký AI */
@@ -23,6 +25,6 @@ body {
   width: 4px;
 }
 .custom-scrollbar::-webkit-scrollbar-thumb {
-  background: #2b3139;
+  background: #334155;
   border-radius: 4px;
 }
