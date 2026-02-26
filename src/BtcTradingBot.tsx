@@ -268,6 +268,7 @@ export default function BitcoinTradingBot() {
   const [scalpAutoEnabled, setScalpAutoEnabled] = useState(true);
   const [scalpPosition, setScalpPosition] = useState<Position | null>(null);
   const [scalpHistory, setScalpHistory] = useState<TradeHistoryItem[]>([]);
+  const [scalpBalance, setScalpBalance] = useState<number>(300); // Mặc định 300 USDT cho scalp
   const [syncingRunningState, setSyncingRunningState] = useState(false);
   const [controllerSessionId, setControllerSessionId] = useState<string | null>(null);
 
@@ -331,12 +332,16 @@ export default function BitcoinTradingBot() {
       if (d.exists()) {
         const data = d.data();
         if (Number(data.balance) === 10000 && Number(data.pnlHistory) === 0) {
-          setDoc(userRef, { balance: 1000, pnlHistory: 0, tgToken: data.tgToken || '', tgChatId: data.tgChatId || '' });
+          setDoc(userRef, { balance: 1000, scalpBalance: 300, pnlHistory: 0, tgToken: data.tgToken || '', tgChatId: data.tgChatId || '' });
         } else {
           setAccount({ balance: Number(data.balance) || 0, pnlHistory: Number(data.pnlHistory) || 0 });
+          setScalpBalance(Number(data.scalpBalance) || 300);
           setTgConfig({ token: String(data.tgToken || ''), chatId: String(data.tgChatId || '') });
         }
-      } else setDoc(userRef, { balance: CONFIG.INITIAL_BALANCE, pnlHistory: 0 });
+      } else {
+        setDoc(userRef, { balance: CONFIG.INITIAL_BALANCE, scalpBalance: 300, pnlHistory: 0 });
+        setScalpBalance(300);
+      }
     });
 
     const unsubPos = onSnapshot(posRef, (d) => {
@@ -986,6 +991,11 @@ export default function BitcoinTradingBot() {
       return;
     }
 
+    if (scalpBalance < scalpConfig.margin) {
+      addLog(`Không đủ vốn Scalp: Cần ${scalpConfig.margin} USDT, nhưng chỉ còn ${scalpBalance.toFixed(2)} USDT.`, 'danger');
+      return;
+    }
+
     const entryPrice = latestPriceRef.current || currentPrice;
     if (!entryPrice) {
       addLog('Không thể mở SCALP: chưa có giá thị trường.', 'danger');
@@ -1019,6 +1029,7 @@ export default function BitcoinTradingBot() {
     };
 
     setScalpPosition(details);
+    setScalpBalance(prev => prev - margin); // Trừ tiền ký quỹ tạm thời
     lastScalpSignalRef.current = Date.now();
     addLog(`SCALP ${type} @ ${entryPrice.toFixed(2)} | TP ${tpPrice.toFixed(2)} | SL ${slPrice.toFixed(2)} [${setup}]`, 'success');
     sendTelegram(`⚡ <b>SCALP ${type}</b>\n• Setup: ${setup}\n• Entry: ${entryPrice.toFixed(2)}\n• TP: ${tpPrice.toFixed(2)}\n• SL: ${slPrice.toFixed(2)}\n• Margin: ${margin} USDT\n• Lev: x${leverage}`);
@@ -1047,8 +1058,17 @@ export default function BitcoinTradingBot() {
       signalDetail: activeScalp.signalDetail,
     };
 
+    const newBalance = scalpBalance + activeScalp.margin + finalPnl;
+
     setScalpHistory((prev) => [trade, ...prev].slice(0, 25));
     setScalpPosition(null);
+    setScalpBalance(newBalance);
+
+    if (user) {
+      const userRef = doc(db, 'artifacts', APP_ID, 'users', user.uid, 'account', 'data');
+      setDoc(userRef, { scalpBalance: newBalance }, { merge: true }).catch(console.error);
+    }
+
     addLog(`SCALP ĐÓNG ${activeScalp.type} (${reason}): ${finalPnl > 0 ? '+' : ''}${finalPnl.toFixed(2)} USDT`, finalPnl >= 0 ? 'success' : 'danger');
     sendTelegram(`${finalPnl >= 0 ? '✅' : '❌'} <b>SCALP ĐÓNG ${activeScalp.type}</b>\n• Lý do: ${reason}\n• PnL: ${finalPnl > 0 ? '+' : ''}${finalPnl.toFixed(2)} USDT`);
   };
@@ -1160,7 +1180,10 @@ export default function BitcoinTradingBot() {
           <div className="bg-slate-800/80 backdrop-blur-xl rounded-2xl border border-slate-500/50 p-4 shadow-xl space-y-3">
             <div className="flex items-center justify-between">
               <h3 className="text-xs font-black tracking-widest uppercase text-orange-300">Scalp độc lập</h3>
-              <span className="text-[10px] text-slate-300">PnL: <b className={scalpTotalPnl >= 0 ? 'text-emerald-300' : 'text-red-300'}>{scalpTotalPnl.toFixed(2)} USDT</b></span>
+              <div className="text-right">
+                <span className="block text-[11px] font-bold text-slate-100">{scalpBalance.toFixed(2)} USDT</span>
+                <span className="text-[9px] text-slate-400">Vốn Scalp</span>
+              </div>
             </div>
 
             <div className="grid grid-cols-2 gap-2 text-[11px]">

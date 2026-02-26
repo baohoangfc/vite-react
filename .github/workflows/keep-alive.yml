@@ -1,0 +1,14 @@
+name: Keep Render Backend Alive
+
+on:
+  schedule:
+    - cron: "*/10 * * * *" # Runs every 10 minutes
+  workflow_dispatch: # Allows manual triggering
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Render Health Check endpoint
+        run: |
+          curl -sS https://exus-bot-backend.onrender.com/api/health
