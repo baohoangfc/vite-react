@@ -1,21 +1,42 @@
-# React + TypeScript + Vite
+# BTC Trading Bot - Fullstack (Frontend + Backend)
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Dự án đã được cấu hình theo hướng **fullstack** và an toàn để deploy production trên **Vercel**:
+- **Frontend**: React + Vite.
+- **Backend local (dev)**: Node HTTP server tại `backend-server.mjs`.
+- **Backend production (Vercel)**: Serverless Functions tại thư mục `api/` (dùng auto-detect mặc định của Vercel, không ép runtime qua `vercel.json`).
 
-While this project uses React, Vite supports many popular JS frameworks. [See all the supported frameworks](https://vitejs.dev/guide/#scaffolding-your-first-vite-project).
+## Cài đặt
 
-## Deploy Your Own
-
-Deploy your own Vite project with Vercel.
-
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/vercel/examples/tree/main/framework-boilerplates/vite-react&template=vite-react)
-
-_Live Example: https://vite-react-example.vercel.app_
-
-### Deploying From Your Terminal
-
-You can deploy your new Vite project with a single command from your terminal using [Vercel CLI](https://vercel.com/download):
-
-```shell
-$ vercel
+```bash
+npm install
 ```
+
+## Chạy local (frontend + backend)
+
+```bash
+npm run dev
+```
+
+## Scripts
+
+- `npm run dev`: chạy đồng thời frontend + backend local.
+- `npm run dev:frontend`: chạy Vite frontend.
+- `npm run dev:backend`: chạy backend local ở `http://localhost:3001`.
+- `npm run build`: build frontend production.
+- `npm run preview`: preview frontend build.
+
+## API
+
+### Local development
+- `GET http://localhost:3001/api/health`
+- `GET http://localhost:3001/api/config`
+
+Frontend gọi `/api/*` và được Vite proxy sang backend local khi chạy dev.
+
+### Production trên Vercel
+- `GET /api/health`
+- `GET /api/config`
+
+Các endpoint production được phục vụ bởi Vercel Functions trong thư mục `api/`.
+
+Payload API local và production dùng chung từ `shared/backend-payloads.mjs` để tránh lệch dữ liệu giữa 2 môi trường.
