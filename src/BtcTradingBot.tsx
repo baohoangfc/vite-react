@@ -1109,7 +1109,6 @@ export default function BitcoinTradingBot() {
   const unrealizedRoe = position ? (unrealizedPnl / position.margin) * 100 : 0;
   const scalpUnrealizedPnl = scalpPosition ? (scalpPosition.type === 'LONG' ? (currentPrice - scalpPosition.entryPrice) * (scalpPosition.size / scalpPosition.entryPrice) : (scalpPosition.entryPrice - currentPrice) * (scalpPosition.size / scalpPosition.entryPrice)) : 0;
   const scalpUnrealizedRoe = scalpPosition ? (scalpUnrealizedPnl / scalpPosition.margin) * 100 : 0;
-  const scalpTotalPnl = scalpHistory.reduce((sum, trade) => sum + trade.pnl, 0);
   const scalpWins = scalpHistory.filter((trade) => trade.pnl > 0).length;
   const scalpLosses = scalpHistory.filter((trade) => trade.pnl < 0).length;
   const scalpWinRate = scalpHistory.length ? ((scalpWins / scalpHistory.length) * 100).toFixed(1) : '0.0';
