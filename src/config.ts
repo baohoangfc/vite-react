@@ -1,7 +1,7 @@
 export const CONFIG = {
     SYMBOL: 'BTCUSDT',
     INTERVAL: '1m',
-    LIMIT_CANDLES: 100,
+    LIMIT_CANDLES: 2000,
 
     // Chỉ báo kỹ thuật
     RSI_PERIOD: 14,
