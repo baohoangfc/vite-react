@@ -143,7 +143,6 @@ export default function BitcoinTradingBot() {
     try { await fetch(`https://api.telegram.org/bot${token}/sendMessage`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'HTML' }) }); } catch (e) { }
   };
 
-
   const syncRuntimeState = async (running: boolean) => {
     try {
       const response = await fetch('/api/runtime', {
@@ -671,7 +670,7 @@ export default function BitcoinTradingBot() {
                     ))}
                   </div>
                 ) : (
-                  <div className="space-y-3"> 
+                  <div className="space-y-3">
                     <DailyAggregation history={history} />
                     <div className="bg-white/5 border border-white/10 rounded-xl p-3 space-y-3">
                       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
