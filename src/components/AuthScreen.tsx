@@ -30,7 +30,7 @@ export default function AuthScreen() {
 
     return (
         <div className="fixed inset-0 z-40 bg-slate-100 flex items-center justify-center p-4 font-sans text-slate-800">
-            <div className="bg-white p-6 sm:p-8 rounded-[1.5rem] sm:rounded-[2rem] border border-slate-200 w-full max-w-md shadow-2xl relative overflow-hidden">
+            <div className="bg-slate-200 p-6 sm:p-8 rounded-[1.5rem] sm:rounded-[2rem] border border-slate-200 w-full max-w-md shadow-2xl relative overflow-hidden">
                 <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500"></div>
                 <div className="flex justify-center mb-6">
                     <div className="p-3 sm:p-4 bg-gradient-to-br from-blue-600 to-purple-600 rounded-2xl shadow-lg shadow-purple-500/20 text-white">
@@ -44,7 +44,7 @@ export default function AuthScreen() {
                         value={email}
                         onChange={e => setEmail(e.target.value)}
                         required
-                        className="w-full bg-slate-50 border border-slate-300 rounded-xl p-4 text-sm outline-none focus:border-blue-500 transition-colors"
+                        className="w-full bg-slate-100 border border-slate-300 rounded-xl p-4 text-sm outline-none focus:border-blue-500 transition-colors"
                         placeholder="Địa chỉ Email"
                     />
                     <input
@@ -52,7 +52,7 @@ export default function AuthScreen() {
                         value={password}
                         onChange={e => setPassword(e.target.value)}
                         required
-                        className="w-full bg-slate-50 border border-slate-300 rounded-xl p-4 text-sm outline-none focus:border-blue-500 transition-colors"
+                        className="w-full bg-slate-100 border border-slate-300 rounded-xl p-4 text-sm outline-none focus:border-blue-500 transition-colors"
                         placeholder="Mật khẩu bảo mật"
                     />
                     {error && <p className="text-red-600 text-xs text-center font-bold bg-red-100 p-2 rounded-lg">{error}</p>}

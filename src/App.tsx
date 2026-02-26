@@ -36,7 +36,7 @@ function App() {
   return (
     <div className="w-full min-h-screen bg-slate-100">
       <div className="mx-auto max-w-6xl px-4 pt-4">
-        <div className="rounded-lg border border-slate-300 bg-white p-3 text-sm text-slate-700 shadow-sm">
+        <div className="rounded-lg border border-slate-300 bg-slate-200 p-3 text-sm text-slate-700 shadow-sm">
           {backend ? (
             <p>
               Backend connected: <strong>{backend.service}</strong> ({backend.status})

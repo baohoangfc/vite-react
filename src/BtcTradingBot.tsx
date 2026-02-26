@@ -421,11 +421,11 @@ export default function BitcoinTradingBot() {
 
       {showSettings && (
         <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
-          <div className="bg-white p-6 rounded-3xl border border-slate-200 max-w-md w-full shadow-2xl">
+          <div className="bg-slate-200 p-6 rounded-3xl border border-slate-200 max-w-md w-full shadow-2xl">
             <h2 className="text-xl font-black mb-4 flex items-center gap-2 uppercase tracking-tighter text-blue-400"><Settings size={20} /> Cấu hình Telegram</h2>
             <div className="space-y-4">
-              <input value={tgConfig.token} onChange={e => setTgConfig({ ...tgConfig, token: e.target.value })} className="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 text-sm text-slate-800 focus:border-blue-500 outline-none" placeholder="Bot Token Telegram" />
-              <input value={tgConfig.chatId} onChange={e => setTgConfig({ ...tgConfig, chatId: e.target.value })} className="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 text-sm text-slate-800 focus:border-blue-500 outline-none" placeholder="Chat ID" />
+              <input value={tgConfig.token} onChange={e => setTgConfig({ ...tgConfig, token: e.target.value })} className="w-full bg-slate-100 border border-slate-300 rounded-xl p-3 text-sm text-slate-800 focus:border-blue-500 outline-none" placeholder="Bot Token Telegram" />
+              <input value={tgConfig.chatId} onChange={e => setTgConfig({ ...tgConfig, chatId: e.target.value })} className="w-full bg-slate-100 border border-slate-300 rounded-xl p-3 text-sm text-slate-800 focus:border-blue-500 outline-none" placeholder="Chat ID" />
             </div>
             <div className="mt-6 flex gap-3">
               <button onClick={() => setShowSettings(false)} className="flex-1 py-3 text-slate-500 font-bold hover:text-slate-800 transition-colors">HỦY</button>
@@ -439,7 +439,7 @@ export default function BitcoinTradingBot() {
       )}
 
       <div className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        <div className="lg:col-span-12 flex flex-col md:flex-row justify-between items-center bg-white p-5 rounded-2xl shadow-lg border border-slate-200 relative overflow-hidden">
+        <div className="lg:col-span-12 flex flex-col md:flex-row justify-between items-center bg-slate-200 p-5 rounded-2xl shadow-lg border border-slate-200 relative overflow-hidden">
           <div className="absolute top-0 left-0 w-full h-[2px] bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500 opacity-50"></div>
           <div className="flex flex-col sm:flex-row items-center gap-4 z-10 w-full sm:w-auto text-center sm:text-left">
             <div className="p-3 bg-gradient-to-br from-blue-600 to-purple-600 rounded-xl text-white shadow-lg shadow-blue-500/30"><Crosshair size={24} /></div>
@@ -476,11 +476,11 @@ export default function BitcoinTradingBot() {
           <BarChart candles={candles} position={position} />
           <div className="grid grid-cols-1 md:grid-cols-2 gap-5 flex-1">
             <ActivePosition position={position} currentPrice={currentPrice} unrealizedPnl={unrealizedPnl} unrealizedRoe={unrealizedRoe} onCloseOrder={handleCloseOrder} />
-            <div className="bg-white rounded-2xl border border-slate-200 flex flex-col overflow-hidden shadow-lg">
+            <div className="bg-slate-200 rounded-2xl border border-slate-200 flex flex-col overflow-hidden shadow-lg">
               <div className="flex bg-slate-100 border-b border-slate-200 p-1">
-                <button onClick={() => setActiveTab('LOGS')} className={`flex-1 py-2.5 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all flex items-center justify-center gap-1.5 ${activeTab === 'LOGS' ? 'bg-white text-blue-500 shadow-sm border border-slate-200' : 'text-slate-500 hover:text-slate-700'}`}><Terminal size={12} /> Console AI</button>
-                <button onClick={() => setActiveTab('HISTORY')} className={`flex-1 py-2.5 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all flex items-center justify-center gap-1.5 ${activeTab === 'HISTORY' ? 'bg-white text-yellow-500 shadow-sm border border-slate-200' : 'text-slate-500 hover:text-slate-700'}`}><History size={12} /> Winrate: {winRate}%</button>
-                <button onClick={() => setActiveTab('DAILY')} className={`flex-1 py-2.5 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all flex items-center justify-center gap-1.5 ${activeTab === 'DAILY' ? 'bg-white text-purple-500 shadow-sm border border-slate-200' : 'text-slate-500 hover:text-slate-700'}`}>Ngày</button>
+                <button onClick={() => setActiveTab('LOGS')} className={`flex-1 py-2.5 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all flex items-center justify-center gap-1.5 ${activeTab === 'LOGS' ? 'bg-slate-200 text-blue-600 shadow-sm border border-slate-300' : 'text-slate-500 hover:text-slate-700'}`}><Terminal size={12} /> Console AI</button>
+                <button onClick={() => setActiveTab('HISTORY')} className={`flex-1 py-2.5 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all flex items-center justify-center gap-1.5 ${activeTab === 'HISTORY' ? 'bg-slate-200 text-yellow-600 shadow-sm border border-slate-300' : 'text-slate-500 hover:text-slate-700'}`}><History size={12} /> Winrate: {winRate}%</button>
+                <button onClick={() => setActiveTab('DAILY')} className={`flex-1 py-2.5 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all flex items-center justify-center gap-1.5 ${activeTab === 'DAILY' ? 'bg-slate-200 text-purple-600 shadow-sm border border-slate-300' : 'text-slate-500 hover:text-slate-700'}`}>Ngày</button>
               </div>
               <div className="flex-1 overflow-y-auto p-3 custom-scrollbar bg-slate-50 font-mono">
                 {activeTab === 'LOGS' ? (
@@ -493,7 +493,7 @@ export default function BitcoinTradingBot() {
                 ) : activeTab === 'HISTORY' ? (
                   <div className="space-y-2">
                     {history.map((trade) => (
-                      <div key={trade.id} className="bg-white p-3 rounded-xl border border-slate-200 flex justify-between items-center transition-hover hover:bg-slate-50">
+                      <div key={trade.id} className="bg-slate-200 p-3 rounded-xl border border-slate-300 flex justify-between items-center transition-hover hover:bg-slate-50">
                         <div>
                           <div className={`text-xs font-black uppercase ${trade.type === 'LONG' ? 'text-green-500' : 'text-red-500'}`}>{trade.type} <span className="text-gray-500 text-[9px] ml-1">x{CONFIG.LEVERAGE}</span></div>
                           <div className="text-[10px] text-slate-500 mt-1 italic opacity-80">{trade.reason}</div>
