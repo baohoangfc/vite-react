@@ -3,7 +3,7 @@ services:
     name: nexus-ai-backend
     env: node
     buildCommand: ""
-    startCommand: "node backend-server.mjs"
+    startCommand: "npx tsx backend-server.ts"
     envVars:
       - key: NODE_VERSION
         value: 18.18.0

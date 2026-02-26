@@ -395,6 +395,8 @@ export default function BitcoinTradingBot() {
           chatId: tgConfigRef.current.chatId,
           symbol: CONFIG.SYMBOL,
           heartbeatMs: CONFIG.HEARTBEAT_MS,
+          uid: user?.uid,
+          appId: APP_ID,
         }),
       });
       setRuntimeOnline(response.ok);
@@ -723,6 +725,26 @@ export default function BitcoinTradingBot() {
       const pnl = isL
         ? (close - positionRef.current.entryPrice) * (positionRef.current.size / positionRef.current.entryPrice)
         : (positionRef.current.entryPrice - close) * (positionRef.current.size / positionRef.current.entryPrice);
+
+      // Trailing SL / Breakeven at 1.5R
+      const riskDist = Math.abs(positionRef.current.entryPrice - positionRef.current.slPrice);
+      const currDist = isL ? (close - positionRef.current.entryPrice) : (positionRef.current.entryPrice - close);
+
+      if (riskDist > 0 && currDist >= riskDist * 1.5 && !positionRef.current.signalDetail?.isBreakeven) {
+        const newSl = positionRef.current.entryPrice;
+        if ((isL && newSl > positionRef.current.slPrice) || (!isL && newSl < positionRef.current.slPrice)) {
+          const updatedPos = {
+            ...positionRef.current,
+            slPrice: newSl,
+            signalDetail: { ...positionRef.current.signalDetail, isBreakeven: true }
+          };
+          syncRuntimePositionState(updatedPos);
+          if (shouldLogAnalysis) {
+            addLog(`Đã dời StopLoss về hòa vốn (Breakeven) do lợi nhuận đạt 1.5R. Giá an toàn: ${newSl.toFixed(2)}`, 'success');
+            lastAnalysisLogTime.current = now;
+          }
+        }
+      }
 
       let reason = '';
       if ((isL && close >= positionRef.current.tpPrice) || (!isL && close <= positionRef.current.tpPrice)) reason = 'TAKE PROFIT';
