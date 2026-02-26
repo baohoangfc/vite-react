@@ -27,6 +27,8 @@ export const CONFIG = {
     LOG_INTERVAL_MS: 60000,
     HEARTBEAT_MS: 10 * 60 * 1000, // 10 phút báo cáo Telegram
     COOLDOWN_MS: 60 * 1000,
+    ALERT_DRAWDOWN_PERCENT: 5,
+    ALERT_DAILY_SUMMARY_MS: 24 * 60 * 60 * 1000,
 };
 
 export const getSafeAppId = () => {
