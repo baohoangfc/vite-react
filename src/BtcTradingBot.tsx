@@ -268,6 +268,8 @@ export default function BitcoinTradingBot() {
   const [scalpAutoEnabled, setScalpAutoEnabled] = useState(true);
   const [scalpPosition, setScalpPosition] = useState<Position | null>(null);
   const [scalpHistory, setScalpHistory] = useState<TradeHistoryItem[]>([]);
+  const [syncingRunningState, setSyncingRunningState] = useState(false);
+  const [controllerSessionId, setControllerSessionId] = useState<string | null>(null);
 
   // Trading State (Cloud Synced)
   const [account, setAccount] = useState<Account>({ balance: CONFIG.INITIAL_BALANCE, pnlHistory: 0 });
@@ -293,6 +295,9 @@ export default function BitcoinTradingBot() {
   const dayTrackerRef = useRef<{ dayKey: string; startBalance: number; realizedPnl: number }>({ dayKey: '', startBalance: 0, realizedPnl: 0 });
   const scalpPositionRef = useRef<Position | null>(null);
   const lastScalpSignalRef = useRef(0);
+  const clientSessionIdRef = useRef(`session_${Math.random().toString(36).slice(2)}_${Date.now()}`);
+  const isControllerSession = !controllerSessionId || controllerSessionId === clientSessionIdRef.current;
+  const shouldRunLocalBot = isRunning && !runtimeOnline && isControllerSession;
 
   // Sync refs
   useEffect(() => { tgConfigRef.current = tgConfig; }, [tgConfig]);
@@ -302,7 +307,10 @@ export default function BitcoinTradingBot() {
   useEffect(() => { logsEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [logs, activeTab]);
   useEffect(() => { candlesRef.current = candles; }, [candles]); // Added
   useEffect(() => { sentimentRef.current = sentiment; }, [sentiment]); // Added
-  useEffect(() => { isTradingActive.current = isRunning && !runtimeOnline; }, [isRunning, runtimeOnline]); // Added
+  useEffect(() => {
+    const isLocalController = !controllerSessionId || controllerSessionId === clientSessionIdRef.current;
+    isTradingActive.current = isRunning && !runtimeOnline && isLocalController;
+  }, [isRunning, runtimeOnline, controllerSessionId]); // Added
   useEffect(() => { scalpPositionRef.current = scalpPosition; }, [scalpPosition]);
 
   // Auth Init
@@ -317,6 +325,7 @@ export default function BitcoinTradingBot() {
     const userRef = doc(db, 'artifacts', APP_ID, 'users', user.uid, 'account', 'data');
     const posRef = doc(db, 'artifacts', APP_ID, 'users', user.uid, 'position', 'active');
     const histCol = collection(db, 'artifacts', APP_ID, 'users', user.uid, 'history');
+    const runtimeRef = doc(db, 'artifacts', APP_ID, 'users', user.uid, 'runtime', 'state');
 
     const unsubAcc = onSnapshot(userRef, (d) => {
       if (d.exists()) {
@@ -342,7 +351,20 @@ export default function BitcoinTradingBot() {
       setHistory(list.sort((a, b) => (Number(b.time) || 0) - (Number(a.time) || 0)));
     });
 
-    return () => { unsubAcc(); unsubPos(); unsubHist(); };
+    const unsubRuntime = onSnapshot(runtimeRef, (d) => {
+      if (!d.exists()) {
+        setDoc(runtimeRef, { isRunning: false, controllerSessionId: null }, { merge: true });
+        return;
+      }
+
+      const remoteRunning = Boolean(d.data().isRunning);
+      const remoteController = typeof d.data().controllerSessionId === 'string' ? d.data().controllerSessionId : null;
+      setIsRunning((prev) => (prev === remoteRunning ? prev : remoteRunning));
+      setControllerSessionId(remoteController);
+      setSyncingRunningState(false);
+    });
+
+    return () => { unsubAcc(); unsubPos(); unsubHist(); unsubRuntime(); };
   }, [user]);
 
   const addLog = (message: string, type: 'info' | 'success' | 'danger' | 'warning' | 'analysis' = 'info') => {
@@ -376,10 +398,43 @@ export default function BitcoinTradingBot() {
     }
   };
 
-  const handleToggleRunning = () => {
+  const updateUserRunningState = async (running: boolean, nextControllerSessionId: string | null) => {
+    if (!user) return;
+    const runtimeRef = doc(db, 'artifacts', APP_ID, 'users', user.uid, 'runtime', 'state');
+    await setDoc(runtimeRef, {
+      isRunning: running,
+      controllerSessionId: nextControllerSessionId,
+      updatedAt: Date.now(),
+    }, { merge: true });
+  };
+
+  const syncRuntimePositionState = async (details: Position | null) => {
+    if (!user) return;
+    const posRef = doc(db, 'artifacts', APP_ID, 'users', user.uid, 'position', 'active');
+    if (details) {
+      await setDoc(posRef, { active: true, details }, { merge: true });
+      return;
+    }
+    await setDoc(posRef, { active: false }, { merge: true });
+  };
+
+  const handleToggleRunning = async () => {
+    if (!user || syncingRunningState) return;
+
     const nextRunning = !isRunning;
+    const nextControllerSessionId = nextRunning ? clientSessionIdRef.current : null;
+    setSyncingRunningState(true);
     setIsRunning(nextRunning);
-    syncRuntimeState(nextRunning);
+    setControllerSessionId(nextControllerSessionId);
+    try {
+      await updateUserRunningState(nextRunning, nextControllerSessionId);
+      await syncRuntimeState(nextRunning);
+    } catch (error) {
+      setIsRunning(!nextRunning);
+      setControllerSessionId(controllerSessionId);
+      setSyncingRunningState(false);
+      addLog('Không thể đồng bộ trạng thái bot giữa các phiên đăng nhập.', 'warning');
+    }
   };
 
   const fetchHistoricalCandles = async (endTimeMs: number, days: number) => {
@@ -449,7 +504,7 @@ export default function BitcoinTradingBot() {
 
   // Telegram Heartbeat
   useEffect(() => {
-    if (!isRunning || !user || runtimeOnline) return;
+    if (!shouldRunLocalBot || !user) return;
     sendTelegram(`🟢 <b>HỆ THỐNG ĐÃ KHỞI ĐỘNG</b>\n• Cặp: BTCUSDT\n• Chu kỳ báo cáo: 10 phút/lần`);
 
     const heartbeat = setInterval(() => {
@@ -463,7 +518,7 @@ export default function BitcoinTradingBot() {
       clearInterval(heartbeat);
       sendTelegram(`🔴 <b>HỆ THỐNG ĐÃ DỪNG</b>\n• Bot đã ngừng quét thị trường.`);
     };
-  }, [isRunning, user, runtimeOnline]);
+  }, [shouldRunLocalBot, user]);
 
   useEffect(() => {
     const syncInitialRuntime = async () => {
@@ -472,14 +527,19 @@ export default function BitcoinTradingBot() {
         if (!response.ok) return;
         const data = await response.json();
         setRuntimeOnline(Boolean(data.background));
-        if (typeof data.isRunning === 'boolean') setIsRunning(data.isRunning);
+        if (typeof data.isRunning === 'boolean') {
+          setIsRunning(data.isRunning);
+          if (user && data.background) {
+            void updateUserRunningState(data.isRunning, 'runtime-server');
+          }
+        }
       } catch (error) {
         setRuntimeOnline(false);
       }
     };
 
     syncInitialRuntime();
-  }, []);
+  }, [user]);
 
   useEffect(() => {
     if (!runtimeOnline) return;
@@ -490,7 +550,12 @@ export default function BitcoinTradingBot() {
         if (!response.ok) return;
         const data = await response.json();
 
-        if (typeof data.isRunning === 'boolean') setIsRunning(data.isRunning);
+        if (typeof data.isRunning === 'boolean') {
+          setIsRunning(data.isRunning);
+          if (user && data.background) {
+            void updateUserRunningState(data.isRunning, 'runtime-server');
+          }
+        }
         if (typeof data.balance === 'number' || typeof data.pnlHistory === 'number') {
           setAccount((prev) => ({
             balance: typeof data.balance === 'number' ? data.balance : prev.balance,
@@ -499,7 +564,7 @@ export default function BitcoinTradingBot() {
         }
 
         if (data.position && typeof data.position === 'object') {
-          setPosition({
+          const runtimePosition = {
             type: data.position.type,
             entryPrice: Number(data.position.entryPrice || 0),
             margin: Number(data.position.margin || 0),
@@ -510,9 +575,12 @@ export default function BitcoinTradingBot() {
             openFee: Number(data.position.openFee || 0),
             openTime: Number(data.position.openTime || Date.now()),
             signalDetail: data.position.signalDetail || null,
-          });
+          } as Position;
+          setPosition(runtimePosition);
+          if (user) void syncRuntimePositionState(runtimePosition);
         } else {
           setPosition(null);
+          if (user) void syncRuntimePositionState(null);
         }
       } catch (error) {
         // ignore polling errors while backend warms up
@@ -522,10 +590,10 @@ export default function BitcoinTradingBot() {
     pullRuntimeState();
     const runtimePoll = setInterval(pullRuntimeState, 5000);
     return () => clearInterval(runtimePoll);
-  }, [runtimeOnline]);
+  }, [runtimeOnline, user]);
 
   useEffect(() => {
-    if (!isRunning || runtimeOnline) {
+    if (!shouldRunLocalBot) {
       drawdownAlertSentRef.current = false;
       return;
     }
@@ -544,10 +612,10 @@ export default function BitcoinTradingBot() {
     if (drawdownPercent < CONFIG.ALERT_DRAWDOWN_PERCENT * 0.7) {
       drawdownAlertSentRef.current = false;
     }
-  }, [isRunning, runtimeOnline, account.balance, position, currentPrice]);
+  }, [shouldRunLocalBot, account.balance, position, currentPrice]);
 
   useEffect(() => {
-    if (!isRunning || runtimeOnline) return;
+    if (!shouldRunLocalBot) return;
 
     const sendDailySummary = () => {
       const now = Date.now();
@@ -567,7 +635,7 @@ export default function BitcoinTradingBot() {
     sendDailySummary();
     const summaryTimer = setInterval(sendDailySummary, 60 * 1000);
     return () => clearInterval(summaryTimer);
-  }, [isRunning, runtimeOnline, history, account.pnlHistory, account.balance]);
+  }, [shouldRunLocalBot, history, account.pnlHistory, account.balance]);
 
   const fetchMTFData = async () => {
     try {
@@ -595,12 +663,12 @@ export default function BitcoinTradingBot() {
   };
 
   useEffect(() => {
-    if (isRunning && !runtimeOnline) {
+    if (shouldRunLocalBot) {
       fetchMTFData();
       const interval = setInterval(fetchMTFData, 60000); // 1 minute sync
       return () => clearInterval(interval);
     }
-  }, [isRunning, runtimeOnline]);
+  }, [shouldRunLocalBot]);
 
   const processAndSetData = (newCandles: Candle[]) => {
     setCandles(newCandles);
