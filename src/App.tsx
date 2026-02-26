@@ -34,9 +34,9 @@ function App() {
   }, [])
 
   return (
-    <div className="w-full min-h-screen bg-[#0b0e11]">
-      <div className="mx-auto max-w-6xl px-4 pt-4">
-        <div className="rounded-lg border border-slate-700 bg-slate-900/80 p-3 text-sm text-slate-200">
+    <div className="relative w-full min-h-screen bg-[#0b0e11]">
+      <div className="pointer-events-none fixed left-0 right-0 top-0 z-50 px-4 pt-4">
+        <div className="mx-auto max-w-6xl rounded-lg border border-slate-700 bg-slate-900/80 p-3 text-sm text-slate-200 backdrop-blur">
           {backend ? (
             <p>
               Backend connected: <strong>{backend.service}</strong> ({backend.status})
