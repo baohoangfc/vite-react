@@ -1022,6 +1022,9 @@ export default function BitcoinTradingBot() {
   const scalpUnrealizedPnl = scalpPosition ? (scalpPosition.type === 'LONG' ? (currentPrice - scalpPosition.entryPrice) * (scalpPosition.size / scalpPosition.entryPrice) : (scalpPosition.entryPrice - currentPrice) * (scalpPosition.size / scalpPosition.entryPrice)) : 0;
   const scalpUnrealizedRoe = scalpPosition ? (scalpUnrealizedPnl / scalpPosition.margin) * 100 : 0;
   const scalpTotalPnl = scalpHistory.reduce((sum, trade) => sum + trade.pnl, 0);
+  const scalpWins = scalpHistory.filter((trade) => trade.pnl > 0).length;
+  const scalpLosses = scalpHistory.filter((trade) => trade.pnl < 0).length;
+  const scalpWinRate = scalpHistory.length ? ((scalpWins / scalpHistory.length) * 100).toFixed(1) : '0.0';
 
   const winTrades = history.filter(t => t.pnl > 0).length;
   const winRate = history.length > 0 ? ((winTrades / history.length) * 100).toFixed(1) : 0;
@@ -1121,6 +1124,34 @@ export default function BitcoinTradingBot() {
                 <p className={scalpUnrealizedPnl >= 0 ? 'text-emerald-300 font-semibold' : 'text-red-300 font-semibold'}>Floating: {scalpUnrealizedPnl >= 0 ? '+' : ''}{scalpUnrealizedPnl.toFixed(2)} USDT ({scalpUnrealizedRoe.toFixed(2)}%)</p>
               </div>
             ) : <p className="text-[11px] text-slate-300">Không có lệnh scalp đang mở. Auto scalp sẽ tự vào lệnh khi có tín hiệu.</p>}
+
+            <div className="rounded-lg border border-white/10 bg-slate-900/40 p-2.5 space-y-2">
+              <div className="flex items-center justify-between text-[10px] uppercase tracking-wider">
+                <span className="text-slate-300 font-bold">Tổng hợp lệnh scalp</span>
+                <span className="text-slate-400">{scalpHistory.length} lệnh</span>
+              </div>
+              <div className="grid grid-cols-3 gap-2 text-[10px]">
+                <div className="rounded-md border border-emerald-500/20 bg-emerald-500/10 px-2 py-1 text-center text-emerald-300 font-semibold">Thắng: {scalpWins}</div>
+                <div className="rounded-md border border-red-500/20 bg-red-500/10 px-2 py-1 text-center text-red-300 font-semibold">Thua: {scalpLosses}</div>
+                <div className="rounded-md border border-sky-500/20 bg-sky-500/10 px-2 py-1 text-center text-sky-300 font-semibold">WR: {scalpWinRate}%</div>
+              </div>
+
+              <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1 custom-scrollbar">
+                {scalpHistory.length === 0 ? (
+                  <p className="text-[10px] text-slate-400">Chưa có lịch sử scalp.</p>
+                ) : (
+                  scalpHistory.slice(0, 8).map((trade) => (
+                    <div key={trade.id} className="flex items-center justify-between rounded-md border border-white/10 bg-slate-900/70 px-2 py-1.5 text-[10px]">
+                      <div>
+                        <p className={`font-bold ${trade.type === 'LONG' ? 'text-emerald-300' : 'text-red-300'}`}>{trade.type} • {trade.reason}</p>
+                        <p className="text-slate-400">{new Date(trade.time).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}</p>
+                      </div>
+                      <p className={`font-bold ${trade.pnl >= 0 ? 'text-emerald-300' : 'text-red-300'}`}>{trade.pnl >= 0 ? '+' : ''}{trade.pnl.toFixed(2)}</p>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
           </div>
         </div>
 
