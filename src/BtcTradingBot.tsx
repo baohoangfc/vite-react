@@ -53,6 +53,16 @@ type ScalpConfig = {
   slPercent: number;
 };
 
+type ScalpPlan = {
+  bias: TradeSide | 'WAIT';
+  setup: string;
+  leverage: number;
+  tpPercent: number;
+  slPercent: number;
+  hasTrapRisk: boolean;
+  trapReason?: string;
+};
+
 const RISK_PER_TRADE = 0.01;
 const DAILY_LOSS_LIMIT = 0.03;
 const RR_TARGET = 3;
@@ -63,6 +73,85 @@ const SWEEP_LOOKBACK = 20;
 const BOS_LOOKBACK = 8;
 const EQUAL_TOLERANCE_BPS = 0.0008;
 const SCALP_COOLDOWN_MS = 90_000;
+const DEFAULT_SCALP_MARGIN = 50;
+
+const buildScalpPlan = (candles: Candle[]): ScalpPlan => {
+  if (candles.length < Math.max(CONFIG.EMA_PERIOD, CONFIG.RSI_PERIOD) + 5) {
+    return {
+      bias: 'WAIT',
+      setup: 'CHỜ ĐỦ DỮ LIỆU',
+      leverage: 5,
+      tpPercent: 0.8,
+      slPercent: 0.45,
+      hasTrapRisk: false,
+    };
+  }
+
+  const closes = candles.map((c) => c.close);
+  const volumes = candles.map((c) => c.volume);
+  const last = candles[candles.length - 1];
+  const emaSeries = calculateZLEMA(closes, CONFIG.EMA_PERIOD);
+  const ema = emaSeries[emaSeries.length - 1];
+  const rsi = calculateRSI(closes, CONFIG.RSI_PERIOD);
+  const macd = getMACD(closes);
+  const volSma = calculateSMA(volumes, 20);
+  const recentHigh = Math.max(...closes.slice(-8));
+  const recentLow = Math.min(...closes.slice(-8));
+
+  const volumeWeak = Boolean(volSma) && last.volume < volSma * 1.1;
+  const breakoutWithoutVolume = last.close > recentHigh && volumeWeak;
+  const breakdownWithoutVolume = last.close < recentLow && volumeWeak;
+  const trapReason = breakoutWithoutVolume
+    ? 'Giá vừa phá đỉnh nhưng volume yếu, dễ dính bull trap.'
+    : breakdownWithoutVolume
+      ? 'Giá vừa thủng đáy nhưng volume yếu, dễ dính bear trap.'
+      : undefined;
+
+  if (!ema || !volSma || volumeWeak) {
+    return {
+      bias: 'WAIT',
+      setup: 'ĐỨNG NGOÀI - VOLUME YẾU',
+      leverage: 5,
+      tpPercent: 0.8,
+      slPercent: 0.45,
+      hasTrapRisk: Boolean(trapReason),
+      trapReason,
+    };
+  }
+
+  if (last.close > ema && rsi > 53 && macd.hist > 0) {
+    return {
+      bias: 'LONG',
+      setup: 'BREAKOUT + RETEST (EMA/RSI/MACD ĐỒNG PHA)',
+      leverage: 8,
+      tpPercent: 1,
+      slPercent: 0.5,
+      hasTrapRisk: Boolean(trapReason),
+      trapReason,
+    };
+  }
+
+  if (last.close < ema && rsi < 47 && macd.hist < 0) {
+    return {
+      bias: 'SHORT',
+      setup: 'REJECTION TẠI KHÁNG CỰ/HỖ TRỢ + MOMENTUM YẾU',
+      leverage: 7,
+      tpPercent: 0.9,
+      slPercent: 0.45,
+      hasTrapRisk: Boolean(trapReason),
+      trapReason,
+    };
+  }
+
+  return {
+    bias: 'WAIT',
+    setup: 'KHÔNG CÓ TÍN HIỆU RÕ',
+    leverage: 6,
+    tpPercent: 0.8,
+    slPercent: 0.45,
+    hasTrapRisk: false,
+  };
+};
 
 const aggregateCandles = (candles: Candle[], intervalMinutes: number): Candle[] => {
   if (!candles.length) return [];
@@ -264,11 +353,12 @@ export default function BitcoinTradingBot() {
   const [backtestDate, setBacktestDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [backtestDays, setBacktestDays] = useState(3);
   const [runtimeOnline, setRuntimeOnline] = useState(false);
-  const [scalpConfig, setScalpConfig] = useState<ScalpConfig>({ margin: 50, leverage: 20, tpPercent: 0.35, slPercent: 0.2 });
+  const [scalpConfig, setScalpConfig] = useState<ScalpConfig>({ margin: DEFAULT_SCALP_MARGIN, leverage: 8, tpPercent: 1, slPercent: 0.5 });
   const [scalpAutoEnabled, setScalpAutoEnabled] = useState(true);
   const [scalpPosition, setScalpPosition] = useState<Position | null>(null);
   const [scalpHistory, setScalpHistory] = useState<TradeHistoryItem[]>([]);
   const [scalpBalance, setScalpBalance] = useState<number>(300); // Mặc định 300 USDT cho scalp
+  const [scalpPlan, setScalpPlan] = useState<ScalpPlan>(() => buildScalpPlan([]));
   const [syncingRunningState, setSyncingRunningState] = useState(false);
   const [controllerSessionId, setControllerSessionId] = useState<string | null>(null);
 
@@ -308,6 +398,22 @@ export default function BitcoinTradingBot() {
   useEffect(() => { logsEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [logs, activeTab]);
   useEffect(() => { candlesRef.current = candles; }, [candles]); // Added
   useEffect(() => { sentimentRef.current = sentiment; }, [sentiment]); // Added
+  useEffect(() => {
+    setScalpPlan(buildScalpPlan(candles));
+  }, [candles]);
+  useEffect(() => {
+    setScalpConfig((prev) => {
+      if (prev.margin === DEFAULT_SCALP_MARGIN && prev.leverage === scalpPlan.leverage && prev.tpPercent === scalpPlan.tpPercent && prev.slPercent === scalpPlan.slPercent) {
+        return prev;
+      }
+      return {
+        margin: DEFAULT_SCALP_MARGIN,
+        leverage: scalpPlan.leverage,
+        tpPercent: scalpPlan.tpPercent,
+        slPercent: scalpPlan.slPercent,
+      };
+    });
+  }, [scalpPlan]);
   useEffect(() => {
     const isLocalController = !controllerSessionId || controllerSessionId === clientSessionIdRef.current;
     isTradingActive.current = isRunning && !runtimeOnline && isLocalController;
@@ -1026,8 +1132,8 @@ export default function BitcoinTradingBot() {
       return;
     }
 
-    if (scalpBalance < scalpConfig.margin) {
-      addLog(`Không đủ vốn Scalp: Cần ${scalpConfig.margin} USDT, nhưng chỉ còn ${scalpBalance.toFixed(2)} USDT.`, 'danger');
+    if (scalpBalance < DEFAULT_SCALP_MARGIN) {
+      addLog(`Không đủ vốn Scalp: Cần ${DEFAULT_SCALP_MARGIN} USDT, nhưng chỉ còn ${scalpBalance.toFixed(2)} USDT.`, 'danger');
       return;
     }
 
@@ -1038,7 +1144,7 @@ export default function BitcoinTradingBot() {
     }
 
     const leverage = Math.max(1, scalpConfig.leverage);
-    const margin = Math.max(1, scalpConfig.margin);
+    const margin = DEFAULT_SCALP_MARGIN;
     const size = margin * leverage;
     const fee = size * CONFIG.FEE;
 
@@ -1155,26 +1261,16 @@ export default function BitcoinTradingBot() {
 
   useEffect(() => {
     if (!scalpAutoEnabled || scalpPosition) return;
-    if (candles.length < Math.max(CONFIG.EMA_PERIOD, CONFIG.RSI_PERIOD) + 5) return;
     if (Date.now() - lastScalpSignalRef.current < SCALP_COOLDOWN_MS) return;
 
-    const closes = candles.map((c) => c.close);
-    const volumes = candles.map((c) => c.volume);
-    const last = candles[candles.length - 1];
-    const emaSeries = calculateZLEMA(closes, CONFIG.EMA_PERIOD);
-    const ema = emaSeries[emaSeries.length - 1];
-    const rsi = calculateRSI(closes, CONFIG.RSI_PERIOD);
-    const macd = getMACD(closes);
-    const volSma = calculateSMA(volumes, 20);
+    if (scalpPlan.hasTrapRisk) {
+      addLog(`CẢNH BÁO BẪY SCALP: ${scalpPlan.trapReason}`, 'warning');
+      return;
+    }
 
-    if (!ema || !volSma || last.volume < volSma * 1.1) return;
-
-    const longSignal = last.close > ema && rsi > 53 && macd.hist > 0;
-    const shortSignal = last.close < ema && rsi < 47 && macd.hist < 0;
-
-    if (longSignal) handleOpenScalpOrder('LONG', 'SCALP_AUTO_EMA_RSI_MACD');
-    else if (shortSignal) handleOpenScalpOrder('SHORT', 'SCALP_AUTO_EMA_RSI_MACD');
-  }, [candles, scalpAutoEnabled, scalpPosition]);
+    if (scalpPlan.bias === 'LONG') handleOpenScalpOrder('LONG', scalpPlan.setup);
+    else if (scalpPlan.bias === 'SHORT') handleOpenScalpOrder('SHORT', scalpPlan.setup);
+  }, [candles, scalpAutoEnabled, scalpPosition, scalpPlan]);
 
   const unrealizedPnl = position ? (position.type === 'LONG' ? (currentPrice - position.entryPrice) * (position.size / position.entryPrice) : (position.entryPrice - currentPrice) * (position.size / position.entryPrice)) : 0;
   const unrealizedRoe = position ? (unrealizedPnl / position.margin) * 100 : 0;
@@ -1258,7 +1354,7 @@ export default function BitcoinTradingBot() {
 
             <div className="grid grid-cols-2 gap-2 text-[11px]">
               <label className="text-slate-200">Margin (USDT)
-                <input type="number" min={1} value={scalpConfig.margin} onChange={(e) => setScalpConfig((prev) => ({ ...prev, margin: Number(e.target.value) || 1 }))} className="mt-1 w-full bg-slate-900/70 border border-slate-500 rounded-lg px-2 py-1.5 text-slate-100" />
+                <input type="number" value={DEFAULT_SCALP_MARGIN} readOnly className="mt-1 w-full bg-slate-900/50 border border-slate-500 rounded-lg px-2 py-1.5 text-slate-300 cursor-not-allowed" />
               </label>
               <label className="text-slate-200">Leverage
                 <input type="number" min={1} max={100} value={scalpConfig.leverage} onChange={(e) => setScalpConfig((prev) => ({ ...prev, leverage: Number(e.target.value) || 1 }))} className="mt-1 w-full bg-slate-900/70 border border-slate-500 rounded-lg px-2 py-1.5 text-slate-100" />
@@ -1269,6 +1365,13 @@ export default function BitcoinTradingBot() {
               <label className="text-slate-200">SL (%)
                 <input type="number" min={0.05} step={0.05} value={scalpConfig.slPercent} onChange={(e) => setScalpConfig((prev) => ({ ...prev, slPercent: Number(e.target.value) || 0.05 }))} className="mt-1 w-full bg-slate-900/70 border border-slate-500 rounded-lg px-2 py-1.5 text-slate-100" />
               </label>
+            </div>
+
+            <div className={`rounded-lg border p-2.5 text-[11px] space-y-1.5 ${scalpPlan.hasTrapRisk ? 'border-amber-400/40 bg-amber-500/10' : scalpPlan.bias === 'LONG' ? 'border-emerald-500/30 bg-emerald-500/10' : scalpPlan.bias === 'SHORT' ? 'border-red-500/30 bg-red-500/10' : 'border-slate-500/50 bg-slate-900/50'}`}>
+              <p className="font-bold text-slate-100">Kèo scalp AI ({DEFAULT_SCALP_MARGIN} USDT/lệnh)</p>
+              <p className="text-slate-200">Bias: <span className={scalpPlan.bias === 'LONG' ? 'text-emerald-300 font-bold' : scalpPlan.bias === 'SHORT' ? 'text-red-300 font-bold' : 'text-amber-200 font-bold'}>{scalpPlan.bias}</span> • Setup: {scalpPlan.setup}</p>
+              <p className="text-slate-300">Gợi ý: Lev x{scalpPlan.leverage} • TP {scalpPlan.tpPercent}% • SL {scalpPlan.slPercent}%</p>
+              {scalpPlan.hasTrapRisk && <p className="text-amber-200">⚠️ Bẫy giá: {scalpPlan.trapReason}</p>}
             </div>
 
             <div className="grid grid-cols-2 gap-2">
