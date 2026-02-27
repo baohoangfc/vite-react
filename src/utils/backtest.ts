@@ -43,13 +43,32 @@ type ActiveTrade = {
 const FEE_RATE = CONFIG.FEE
 const RISK_PER_TRADE = 0.01
 const DAILY_LOSS_LIMIT = 0.03
-const RR_TARGET = 3
+const RR_TARGET = 2.2
 const ATR_PERIOD = 14
 const SWEEP_LOOKBACK = 20
 const BOS_LOOKBACK = 8
+const MAX_PENDING_BARS = 6
 const EQUAL_TOLERANCE_BPS = 0.0008
 const HTF_INTERVAL_MIN = 240 // 4H
 const LTF_INTERVAL_MIN = 15
+
+const hasMomentumConfirmation = (candle: Candle, side: Side, atr: number): boolean => {
+  const range = candle.high - candle.low
+  if (range <= 0) return false
+
+  const body = Math.abs(candle.close - candle.open)
+  const bodyRatio = body / range
+  const rangeVsAtr = atr > 0 ? range / atr : 0
+  if (bodyRatio < 0.55 || rangeVsAtr < 0.7) return false
+
+  if (side === 'LONG') {
+    const closeInUpperPart = candle.close >= candle.low + range * 0.7
+    return candle.close > candle.open && closeInUpperPart
+  }
+
+  const closeInLowerPart = candle.close <= candle.high - range * 0.7
+  return candle.close < candle.open && closeInLowerPart
+}
 
 const aggregateCandles = (candles: Candle[], intervalMinutes: number): Candle[] => {
   if (candles.length === 0) return []
@@ -214,6 +233,9 @@ export const runBacktest = (candles: Candle[]): BacktestResult => {
 
   const atr = calculateATR(ltfCandles, ATR_PERIOD)
   const volSmaSeries = ltfCandles.map((_, index) => calculateSMA(ltfCandles.slice(0, index + 1).map((c) => c.volume), 20))
+  const ltfCloses = ltfCandles.map((c) => c.close)
+  const ltfEma20 = calculateEMA(ltfCloses, 20)
+  const ltfEma50 = calculateEMA(ltfCloses, 50)
 
   let pendingOrder: PendingOrder | null = null
   let activeTrade: ActiveTrade | null = null
@@ -252,6 +274,10 @@ export const runBacktest = (candles: Candle[]): BacktestResult => {
       }
     }
 
+    if (balance > peakEquity) peakEquity = balance
+    const dd = ((peakEquity - balance) / peakEquity) * 100
+    if (dd > maxDrawdownPercent) maxDrawdownPercent = dd
+
     if (activeTrade) continue
 
     const dailyLossExceeded = dayStartBalance > 0 && Math.abs(dayRealizedPnl) / dayStartBalance >= DAILY_LOSS_LIMIT && dayRealizedPnl < 0
@@ -261,6 +287,13 @@ export const runBacktest = (candles: Candle[]): BacktestResult => {
     }
 
     if (pendingOrder) {
+      const orderExpired = i - pendingOrder.setupIndex > MAX_PENDING_BARS
+      const orderInvalidated = pendingOrder.side === 'LONG' ? candle.low < pendingOrder.slPrice : candle.high > pendingOrder.slPrice
+      if (orderExpired || orderInvalidated) {
+        pendingOrder = null
+        continue
+      }
+
       const touched = candle.low <= pendingOrder.entryPrice && candle.high >= pendingOrder.entryPrice
       if (touched) {
         const riskCapital = balance * RISK_PER_TRADE
@@ -289,7 +322,7 @@ export const runBacktest = (candles: Candle[]): BacktestResult => {
     if (!isAllowedTradingHourUtc(candle.time)) continue
 
     const volumeSma = volSmaSeries[i]
-    if (!volumeSma || candle.volume <= volumeSma * 1.2) continue
+    if (!volumeSma || candle.volume <= volumeSma * 1.3) continue
 
     const currentAtr = atr[i]
     if (!currentAtr || currentAtr <= 0) continue
@@ -305,6 +338,15 @@ export const runBacktest = (candles: Candle[]): BacktestResult => {
 
     const side: Side = trendBias === 'BULLISH' ? 'LONG' : 'SHORT'
     if (side !== sweep.side) continue
+
+    const ema20 = ltfEma20[i]
+    const ema50 = ltfEma50[i]
+    if (!ema20 || !ema50) continue
+
+    const emaAligned = side === 'LONG' ? candle.close > ema20 && ema20 > ema50 : candle.close < ema20 && ema20 < ema50
+    if (!emaAligned) continue
+
+    if (!hasMomentumConfirmation(candle, side, currentAtr)) continue
 
     const ob = findOrderBlock(ltfCandles, i, side)
     if (!ob) continue
@@ -326,10 +368,6 @@ export const runBacktest = (candles: Candle[]): BacktestResult => {
       setupIndex: i,
     }
   }
-
-  if (balance > peakEquity) peakEquity = balance
-  const dd = ((peakEquity - balance) / peakEquity) * 100
-  if (dd > maxDrawdownPercent) maxDrawdownPercent = dd
 
   const wins = tradePnls.filter((v) => v > 0)
   const losses = tradePnls.filter((v) => v < 0)
