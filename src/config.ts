@@ -33,7 +33,7 @@ export const CONFIG = {
     },
     VOL_MULTIPLIER: 1.2,
     VOL_SMA_PERIOD: 20, // Đường SMA 20 cho Volume Filter
-    CONFLUENCE_THRESHOLD: 4,
+    CONFLUENCE_THRESHOLD: 3,
 
     // Quản lý vốn & Cloud
     LEVERAGE: 50,
