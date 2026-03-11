@@ -177,12 +177,12 @@ const fetchCandles = async (interval: string, limit: number): Promise<Candle[]> 
 };
 
 const fetchBinanceGoldCandles = async (interval: string, limit: number, startTimeMs?: number, endTimeMs?: number): Promise<Candle[]> => {
-  const query = new URLSearchParams({ symbol: 'XAUTUSDT', interval, limit: String(Math.min(limit, 1000)) });
+  const query = new URLSearchParams({ symbol: 'PAXGUSDT', interval, limit: String(Math.min(limit, 1000)) });
   if (startTimeMs) query.set('startTime', String(startTimeMs));
   if (endTimeMs) query.set('endTime', String(endTimeMs));
 
   const response = await fetch(`${BINANCE_KLINES}?${query.toString()}`);
-  if (!response.ok) throw new Error(`Binance XAUTUSDT lỗi (${response.status})`);
+  if (!response.ok) throw new Error(`Binance PAXGUSDT lỗi (${response.status})`);
   const rows = await response.json();
   if (!Array.isArray(rows)) return [];
   return rows

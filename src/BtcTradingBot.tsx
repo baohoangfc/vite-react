@@ -79,16 +79,17 @@ const BOS_LOOKBACK = 8;
 const EQUAL_TOLERANCE_BPS = 0.0008;
 const SCALP_COOLDOWN_MS = 90_000;
 const DEFAULT_SCALP_MARGIN = 50;
+const BINANCE_GOLD_PROXY_SYMBOL = 'PAXGUSDT';
 
 const isGoldSymbol = (symbol: string) => symbol.toUpperCase().includes('XAU');
 
 const fetchBinanceGoldCandles = async (interval: string, limit: number, startTimeMs?: number, endTimeMs?: number): Promise<Candle[]> => {
-  const query = new URLSearchParams({ symbol: 'XAUTUSDT', interval, limit: String(Math.min(limit, 1000)) });
+  const query = new URLSearchParams({ symbol: BINANCE_GOLD_PROXY_SYMBOL, interval, limit: String(Math.min(limit, 1000)) });
   if (startTimeMs) query.set('startTime', String(startTimeMs));
   if (endTimeMs) query.set('endTime', String(endTimeMs));
 
   const res = await fetch(`https://api.binance.com/api/v3/klines?${query.toString()}`);
-  if (!res.ok) throw new Error(`Binance XAUTUSDT lỗi (${res.status})`);
+  if (!res.ok) throw new Error(`Binance ${BINANCE_GOLD_PROXY_SYMBOL} lỗi (${res.status})`);
   const data = await res.json();
   if (!Array.isArray(data)) return [];
 

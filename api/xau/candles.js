@@ -32,7 +32,7 @@ const normalizeBingx = (payload) => {
 
 const fetchBinance = async ({ interval, limit, startTime, endTime }) => {
   const params = new URLSearchParams({
-    symbol: 'XAUTUSDT',
+    symbol: 'PAXGUSDT',
     interval,
     limit: String(Math.min(limit, 1000)),
   })
@@ -40,7 +40,7 @@ const fetchBinance = async ({ interval, limit, startTime, endTime }) => {
   if (endTime > 0) params.set('endTime', String(endTime))
 
   const response = await fetch(`https://api.binance.com/api/v3/klines?${params.toString()}`)
-  if (!response.ok) throw new Error(`Binance XAUTUSDT lỗi (${response.status})`)
+  if (!response.ok) throw new Error(`Binance PAXGUSDT lỗi (${response.status})`)
   const data = await response.json()
   return normalizeBinance(data)
 }
