@@ -168,11 +168,28 @@ const syncPositionToFirebase = async (activePos: any) => {
 
 // --- LOGIC THUẬT TOÁN ĐA KHUNG SMC ---
 const fetchCandles = async (interval: string, limit: number): Promise<Candle[]> => {
-  const query = new URLSearchParams({ symbol: runtimeState.symbol, interval, limit: String(limit) });
+  const safeLimit = Math.min(limit, 1000);
+  const normalizedSymbol = String(runtimeState.symbol || '').toUpperCase();
+  const isGoldSymbol = ['XAUUSD', 'XAUUSDT', 'GOLD'].includes(normalizedSymbol);
+
+  if (isGoldSymbol) {
+    try {
+      const candles = await fetchBinanceGoldCandles(interval, safeLimit);
+      if (candles.length >= Math.max(20, safeLimit - 2)) return candles;
+    } catch (_error) {
+      // fallback sang BingX khi Binance lỗi (418/429/4xx)
+    }
+
+    const candles = await fetchBingxGoldCandles(interval, safeLimit);
+    if (candles.length >= Math.max(20, safeLimit - 2)) return candles;
+    throw new Error('Not enough candle data from Binance/BingX');
+  }
+
+  const query = new URLSearchParams({ symbol: normalizedSymbol || runtimeState.symbol, interval, limit: String(safeLimit) });
   const response = await fetch(`${BINANCE_KLINES}?${query.toString()}`);
   if (!response.ok) throw new Error(`Failed to fetch candles (${response.status})`);
   const rows = await response.json();
-  if (!Array.isArray(rows) || rows.length < limit - 2) throw new Error('Not enough candle data');
+  if (!Array.isArray(rows) || rows.length < safeLimit - 2) throw new Error('Not enough candle data');
   return rows.map((k: any) => ({ time: Number(k[0]), open: Number(k[1]), high: Number(k[2]), low: Number(k[3]), close: Number(k[4]), volume: Number(k[5]), isGreen: Number(k[4]) >= Number(k[1]) }));
 };
 
