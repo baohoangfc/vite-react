@@ -9,14 +9,14 @@ let db: any = null;
 let isFirebaseConfigured = false;
 
 if (typeof window !== 'undefined') {
-    const savedConfig = localStorage.getItem('btc_firebase_cfg');
+    const savedConfig = localStorage.getItem('xau_firebase_cfg');
     let config = null;
 
     if (savedConfig) {
         try {
             config = JSON.parse(savedConfig);
         } catch (e) {
-            localStorage.removeItem('btc_firebase_cfg');
+            localStorage.removeItem('xau_firebase_cfg');
         }
     }
 

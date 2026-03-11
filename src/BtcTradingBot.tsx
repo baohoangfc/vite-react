@@ -61,7 +61,13 @@ type ScalpPlan = {
   slPercent: number;
   hasTrapRisk: boolean;
   trapReason?: string;
+  confidence: number;
+  confirmations: string[];
 };
+
+type BacktestInterval = '1m' | '5m' | '15m' | '1h' | '4h';
+
+const BACKTEST_INTERVAL_OPTIONS: BacktestInterval[] = ['1m', '5m', '15m', '1h', '4h'];
 
 const RISK_PER_TRADE = 0.01;
 const DAILY_LOSS_LIMIT = 0.03;
@@ -76,14 +82,16 @@ const SCALP_COOLDOWN_MS = 90_000;
 const DEFAULT_SCALP_MARGIN = 50;
 
 const buildScalpPlan = (candles: Candle[]): ScalpPlan => {
-  if (candles.length < Math.max(CONFIG.EMA_PERIOD, CONFIG.RSI_PERIOD) + 5) {
+  if (candles.length < 120) {
     return {
       bias: 'WAIT',
-      setup: 'CHỜ ĐỦ DỮ LIỆU',
+      setup: 'CHỜ ĐỦ DỮ LIỆU SMC',
       leverage: 5,
       tpPercent: 0.8,
       slPercent: 0.45,
       hasTrapRisk: false,
+      confidence: 0,
+      confirmations: [],
     };
   }
 
@@ -92,64 +100,108 @@ const buildScalpPlan = (candles: Candle[]): ScalpPlan => {
   const last = candles[candles.length - 1];
   const emaSeries = calculateZLEMA(closes, CONFIG.EMA_PERIOD);
   const ema = emaSeries[emaSeries.length - 1];
+  const volSma = calculateSMA(volumes, 20);
+  const atrSeries = calculateATR(candles, ATR_PERIOD);
+  const atr = atrSeries[atrSeries.length - 1] || 0;
+  const htfTrend = getHtfTrendBias(aggregateCandles(candles, LTF_MINUTES));
+  const sweep = getLiquiditySweep(candles, candles.length - 1, atr);
+  const smc = detectSMC(candles);
   const rsi = calculateRSI(closes, CONFIG.RSI_PERIOD);
   const macd = getMACD(closes);
-  const volSma = calculateSMA(volumes, 20);
-  const recentHigh = Math.max(...closes.slice(-8));
-  const recentLow = Math.min(...closes.slice(-8));
 
+  const recentHigh = Math.max(...closes.slice(-10));
+  const recentLow = Math.min(...closes.slice(-10));
   const volumeWeak = Boolean(volSma) && last.volume < volSma * 1.1;
   const breakoutWithoutVolume = last.close > recentHigh && volumeWeak;
   const breakdownWithoutVolume = last.close < recentLow && volumeWeak;
   const trapReason = breakoutWithoutVolume
-    ? 'Giá vừa phá đỉnh nhưng volume yếu, dễ dính bull trap.'
+    ? 'Giá quét đỉnh nhưng volume thấp, ưu tiên chờ retest rõ hơn.'
     : breakdownWithoutVolume
-      ? 'Giá vừa thủng đáy nhưng volume yếu, dễ dính bear trap.'
+      ? 'Giá quét đáy nhưng volume thấp, ưu tiên chờ retest rõ hơn.'
       : undefined;
 
-  if (!ema || !volSma || volumeWeak) {
+  if (!ema || !volSma || !atr || volumeWeak) {
     return {
       bias: 'WAIT',
-      setup: 'ĐỨNG NGOÀI - VOLUME YẾU',
+      setup: 'ĐỨNG NGOÀI - THANH KHOẢN YẾU',
       leverage: 5,
       tpPercent: 0.8,
       slPercent: 0.45,
       hasTrapRisk: Boolean(trapReason),
       trapReason,
+      confidence: 20,
+      confirmations: ['Volume dưới chuẩn'],
     };
   }
 
-  if (last.close > ema && rsi > 53 && macd.hist > 0) {
+  const longOb = findOrderBlock(candles, candles.length - 1, 'LONG');
+  const shortOb = findOrderBlock(candles, candles.length - 1, 'SHORT');
+  const nearLongOb = longOb ? last.close <= longOb.high + atr * 0.15 && last.close >= longOb.low - atr * 0.15 : false;
+  const nearShortOb = shortOb ? last.close >= shortOb.low - atr * 0.15 && last.close <= shortOb.high + atr * 0.15 : false;
+
+  const longChecks = [
+    { ok: htfTrend === 'BULLISH', text: 'HTF bullish' },
+    { ok: sweep?.side === 'LONG', text: 'Liquidity sweep đáy' },
+    { ok: smc.ob === 'BULLISH', text: 'Bullish OB' },
+    { ok: smc.fvg === 'BULLISH', text: 'Bullish FVG' },
+    { ok: nearLongOb, text: 'Retest vùng OB' },
+    { ok: last.close > ema, text: 'Giá trên EMA' },
+    { ok: rsi >= 50, text: 'RSI > 50' },
+    { ok: macd.hist > 0, text: 'MACD histogram dương' },
+  ];
+  const shortChecks = [
+    { ok: htfTrend === 'BEARISH', text: 'HTF bearish' },
+    { ok: sweep?.side === 'SHORT', text: 'Liquidity sweep đỉnh' },
+    { ok: smc.ob === 'BEARISH', text: 'Bearish OB' },
+    { ok: smc.fvg === 'BEARISH', text: 'Bearish FVG' },
+    { ok: nearShortOb, text: 'Retest vùng OB' },
+    { ok: last.close < ema, text: 'Giá dưới EMA' },
+    { ok: rsi <= 50, text: 'RSI < 50' },
+    { ok: macd.hist < 0, text: 'MACD histogram âm' },
+  ];
+
+  const longScore = longChecks.filter((c) => c.ok).length;
+  const shortScore = shortChecks.filter((c) => c.ok).length;
+  const longMandatory = htfTrend === 'BULLISH' && (sweep?.side === 'LONG' || nearLongOb) && (smc.ob === 'BULLISH' || smc.fvg === 'BULLISH');
+  const shortMandatory = htfTrend === 'BEARISH' && (sweep?.side === 'SHORT' || nearShortOb) && (smc.ob === 'BEARISH' || smc.fvg === 'BEARISH');
+
+  if (longMandatory && longScore >= 6 && longScore >= shortScore) {
     return {
       bias: 'LONG',
-      setup: 'BREAKOUT + RETEST (EMA/RSI/MACD ĐỒNG PHA)',
-      leverage: 8,
-      tpPercent: 1,
-      slPercent: 0.5,
-      hasTrapRisk: Boolean(trapReason),
-      trapReason,
-    };
-  }
-
-  if (last.close < ema && rsi < 47 && macd.hist < 0) {
-    return {
-      bias: 'SHORT',
-      setup: 'REJECTION TẠI KHÁNG CỰ/HỖ TRỢ + MOMENTUM YẾU',
+      setup: 'SMC LONG xác nhận cao',
       leverage: 7,
       tpPercent: 0.9,
       slPercent: 0.45,
       hasTrapRisk: Boolean(trapReason),
       trapReason,
+      confidence: Math.min(95, longScore * 12),
+      confirmations: longChecks.filter((c) => c.ok).map((c) => c.text),
+    };
+  }
+
+  if (shortMandatory && shortScore >= 6 && shortScore > longScore) {
+    return {
+      bias: 'SHORT',
+      setup: 'SMC SHORT xác nhận cao',
+      leverage: 7,
+      tpPercent: 0.9,
+      slPercent: 0.45,
+      hasTrapRisk: Boolean(trapReason),
+      trapReason,
+      confidence: Math.min(95, shortScore * 12),
+      confirmations: shortChecks.filter((c) => c.ok).map((c) => c.text),
     };
   }
 
   return {
     bias: 'WAIT',
-    setup: 'KHÔNG CÓ TÍN HIỆU RÕ',
+    setup: 'SMC CHƯA ĐỦ ĐỒNG THUẬN (>=6 điều kiện)',
     leverage: 6,
     tpPercent: 0.8,
     slPercent: 0.45,
     hasTrapRisk: false,
+    confidence: Math.max(longScore, shortScore) * 10,
+    confirmations: [],
   };
 };
 
@@ -327,7 +379,7 @@ const getBacktestSuggestions = (result: BacktestResult): BacktestSuggestion[] =>
   return suggestions.slice(0, 3);
 };
 
-export default function BitcoinTradingBot() {
+export default function GoldXauTradingBot() {
   if (!isFirebaseConfigured) return <SetupScreen />;
 
   const [user, setUser] = useState<User | null>(null);
@@ -352,6 +404,7 @@ export default function BitcoinTradingBot() {
   const [backtestLoading, setBacktestLoading] = useState(false);
   const [backtestDate, setBacktestDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [backtestDays, setBacktestDays] = useState(3);
+  const [backtestInterval, setBacktestInterval] = useState<BacktestInterval>('15m');
   const [runtimeOnline, setRuntimeOnline] = useState(false);
   const [scalpConfig, setScalpConfig] = useState<ScalpConfig>({ margin: DEFAULT_SCALP_MARGIN, leverage: 8, tpPercent: 1, slPercent: 0.5 });
   const [scalpAutoEnabled, setScalpAutoEnabled] = useState(true);
@@ -386,6 +439,7 @@ export default function BitcoinTradingBot() {
   const dayTrackerRef = useRef<{ dayKey: string; startBalance: number; realizedPnl: number }>({ dayKey: '', startBalance: 0, realizedPnl: 0 });
   const scalpPositionRef = useRef<Position | null>(null);
   const lastScalpSignalRef = useRef(0);
+  const lastScalpGuardLogRef = useRef(0);
   const clientSessionIdRef = useRef(`session_${Math.random().toString(36).slice(2)}_${Date.now()}`);
   const isControllerSession = !controllerSessionId || controllerSessionId === clientSessionIdRef.current;
   const shouldRunLocalBot = isRunning && !runtimeOnline && isControllerSession;
@@ -563,7 +617,7 @@ export default function BitcoinTradingBot() {
     }
   };
 
-  const fetchHistoricalCandles = async (endTimeMs: number, days: number) => {
+  const fetchHistoricalCandles = async (endTimeMs: number, days: number, interval: BacktestInterval) => {
     const dayMs = 24 * 60 * 60 * 1000;
     const startTimeMs = Math.max(0, endTimeMs - days * dayMs);
     const allCandles: Candle[] = [];
@@ -572,7 +626,7 @@ export default function BitcoinTradingBot() {
     while (cursor < endTimeMs) {
       const query = new URLSearchParams({
         symbol: CONFIG.SYMBOL,
-        interval: CONFIG.INTERVAL,
+        interval,
         startTime: String(cursor),
         endTime: String(endTimeMs),
         limit: '1000',
@@ -612,7 +666,7 @@ export default function BitcoinTradingBot() {
       const safeDays = Math.min(30, Math.max(1, Math.floor(backtestDays)));
       const targetDay = new Date(`${backtestDate}T23:59:59.999Z`);
       const endTimeMs = Number.isFinite(targetDay.getTime()) ? targetDay.getTime() : Date.now();
-      const candlesForBacktest = await fetchHistoricalCandles(endTimeMs, safeDays);
+      const candlesForBacktest = await fetchHistoricalCandles(endTimeMs, safeDays, backtestInterval);
 
       if (candlesForBacktest.length <= CONFIG.EMA_PERIOD) {
         throw new Error('Không đủ nến để chạy backtest, hãy tăng số ngày.');
@@ -620,7 +674,7 @@ export default function BitcoinTradingBot() {
 
       const result = runBacktest(candlesForBacktest);
       setBacktestResult(result);
-      addLog(`Backtest ${safeDays} ngày đến ${backtestDate}: ${result.totalTrades} lệnh, WR ${result.winRate.toFixed(1)}%, PnL ${result.netPnl.toFixed(2)} USDT`, 'info');
+      addLog(`Backtest ${backtestInterval} • ${safeDays} ngày đến ${backtestDate}: ${result.totalTrades} lệnh, WR ${result.winRate.toFixed(1)}%, PnL ${result.netPnl.toFixed(2)} USDT`, 'info');
     } catch (error: any) {
       addLog(`Lỗi backtest: ${error?.message || 'Không thể tải dữ liệu'}`, 'danger');
     } finally {
@@ -631,7 +685,7 @@ export default function BitcoinTradingBot() {
   // Telegram Heartbeat
   useEffect(() => {
     if (!shouldRunLocalBot || !user) return;
-    sendTelegram(`🟢 <b>HỆ THỐNG ĐÃ KHỞI ĐỘNG</b>\n• Cặp: BTCUSDT\n• Chu kỳ báo cáo: 10 phút/lần`);
+    sendTelegram(`🟢 <b>HỆ THỐNG ĐÃ KHỞI ĐỘNG</b>\n• Cặp: XAUUSD\n• Chu kỳ báo cáo: 10 phút/lần`);
 
     const heartbeat = setInterval(() => {
       const activeText = positionRef.current ? `Giữ ${positionRef.current.type} x${CONFIG.LEVERAGE}` : 'Đang rình mồi';
@@ -1150,6 +1204,11 @@ export default function BitcoinTradingBot() {
 
     const tpDistance = Math.max(0.01, entryPrice * (Math.max(0.05, scalpConfig.tpPercent) / 100));
     const slDistance = Math.max(0.01, entryPrice * (Math.max(0.05, scalpConfig.slPercent) / 100));
+    const rr = tpDistance / slDistance;
+    if (rr < 1.4) {
+      addLog(`Bỏ qua SCALP ${type}: RR ${rr.toFixed(2)} < 1.40, hãy tăng TP hoặc giảm SL.`, 'warning');
+      return;
+    }
     const tpPrice = type === 'LONG' ? entryPrice + tpDistance : entryPrice - tpDistance;
     const slPrice = type === 'LONG' ? entryPrice - slDistance : entryPrice + slDistance;
 
@@ -1166,6 +1225,7 @@ export default function BitcoinTradingBot() {
       signalDetail: {
         setup,
         leverage,
+        rr: rr.toFixed(2),
       },
     };
 
@@ -1262,6 +1322,14 @@ export default function BitcoinTradingBot() {
   useEffect(() => {
     if (!scalpAutoEnabled || scalpPosition) return;
     if (Date.now() - lastScalpSignalRef.current < SCALP_COOLDOWN_MS) return;
+    if (!isAllowedTradingHourUtc(Date.now())) {
+      if (Date.now() - lastScalpGuardLogRef.current > 5 * 60 * 1000) {
+        addLog('Scalp SMC tạm dừng ngoài phiên thanh khoản mạnh (UTC 13-17, 20-24).', 'warning');
+        lastScalpGuardLogRef.current = Date.now();
+      }
+      return;
+    }
+    if (scalpPlan.confidence < 70) return;
 
     if (scalpPlan.hasTrapRisk) {
       addLog(`CẢNH BÁO BẪY SCALP: ${scalpPlan.trapReason}`, 'warning');
@@ -1331,7 +1399,7 @@ export default function BitcoinTradingBot() {
           </div>
           <div className="flex flex-col sm:flex-row items-center gap-4 sm:gap-6 mt-6 md:mt-0 z-10 w-full sm:w-auto pt-4 md:pt-0 border-t md:border-t-0 border-white/5 md:border-none">
             <div className="text-center sm:text-right">
-              <p className="text-[10px] text-slate-400 font-bold tracking-widest uppercase mb-1">BTC/USDT M1</p>
+              <p className="text-[10px] text-slate-400 font-bold tracking-widest uppercase mb-1">XAU/USD M1</p>
               <p className={`text-2xl sm:text-3xl font-mono font-black tracking-tighter ${candles.length > 0 && currentPrice >= candles[candles.length - 1].open ? 'text-[#0ecb81] drop-shadow-[0_0_8px_#0ecb8140]' : 'text-[#f6465d] drop-shadow-[0_0_8px_#f6465d40]'}`}>{currentPrice.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
             </div>
             <button onClick={handleToggleRunning} className={`flex items-center justify-center gap-2 w-full sm:w-36 py-3.5 rounded-xl font-black uppercase tracking-widest transition-all shadow-lg active:scale-95 border ${isRunning ? 'bg-red-500/10 text-red-500 border-red-500/30 hover:bg-red-500/20' : 'bg-green-500 text-[#05070a] border-green-400 hover:bg-green-400 shadow-green-500/20'}`}>
@@ -1368,9 +1436,11 @@ export default function BitcoinTradingBot() {
             </div>
 
             <div className={`rounded-lg border p-2.5 text-[11px] space-y-1.5 ${scalpPlan.hasTrapRisk ? 'border-amber-400/40 bg-amber-500/10' : scalpPlan.bias === 'LONG' ? 'border-emerald-500/30 bg-emerald-500/10' : scalpPlan.bias === 'SHORT' ? 'border-red-500/30 bg-red-500/10' : 'border-slate-500/50 bg-slate-900/50'}`}>
-              <p className="font-bold text-slate-100">Kèo scalp AI ({DEFAULT_SCALP_MARGIN} USDT/lệnh)</p>
+              <p className="font-bold text-slate-100">Kèo scalp SMC ({DEFAULT_SCALP_MARGIN} USDT/lệnh)</p>
               <p className="text-slate-200">Bias: <span className={scalpPlan.bias === 'LONG' ? 'text-emerald-300 font-bold' : scalpPlan.bias === 'SHORT' ? 'text-red-300 font-bold' : 'text-amber-200 font-bold'}>{scalpPlan.bias}</span> • Setup: {scalpPlan.setup}</p>
               <p className="text-slate-300">Gợi ý: Lev x{scalpPlan.leverage} • TP {scalpPlan.tpPercent}% • SL {scalpPlan.slPercent}%</p>
+              <p className="text-slate-300">Độ tin cậy: <span className="font-semibold text-cyan-300">{scalpPlan.confidence}%</span></p>
+              {scalpPlan.confirmations.length > 0 && <p className="text-slate-300">Xác nhận: {scalpPlan.confirmations.slice(0, 3).join(' • ')}</p>}
               {scalpPlan.hasTrapRisk && <p className="text-amber-200">⚠️ Bẫy giá: {scalpPlan.trapReason}</p>}
             </div>
 
@@ -1456,13 +1526,13 @@ export default function BitcoinTradingBot() {
                     <DailyAggregation history={history} />
                     <div className="bg-white/5 border border-white/10 rounded-xl p-3 space-y-3">
                       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-                        <p className="text-xs font-bold text-purple-300">Backtest nhanh (Binance {CONFIG.SYMBOL})</p>
+                        <p className="text-xs font-bold text-purple-300">Backtest nhanh (Binance {CONFIG.SYMBOL}) • Khung {backtestInterval}</p>
                         <div className="flex flex-col sm:flex-row gap-2">
-                          <button onClick={() => { setBacktestDate(new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().split('T')[0]); setBacktestDays(7); }} className="w-full sm:w-auto px-3 py-2 rounded-lg bg-white/10 text-slate-100 text-xs font-bold hover:bg-white/20">Hôm qua + 7 ngày</button>
+                          <button onClick={() => { setBacktestDate(new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().split('T')[0]); setBacktestDays(7); setBacktestInterval('15m'); }} className="w-full sm:w-auto px-3 py-2 rounded-lg bg-white/10 text-slate-100 text-xs font-bold hover:bg-white/20">Hôm qua + 7 ngày</button>
                           <button onClick={runQuickBacktest} disabled={backtestLoading} className="w-full sm:w-auto px-3 py-2 rounded-lg bg-purple-500/20 text-purple-200 text-xs font-bold hover:bg-purple-500/30 disabled:opacity-50">{backtestLoading ? 'Đang chạy...' : 'Chạy backtest'}</button>
                         </div>
                       </div>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                         <label className="text-[11px] text-slate-200 flex flex-col gap-1">
                           Ngày kết thúc
                           <input type="date" value={backtestDate} onChange={(e) => setBacktestDate(e.target.value)} max={new Date().toISOString().split('T')[0]} className="bg-slate-900/70 border border-slate-500 rounded-lg px-2.5 py-2 text-[11px] text-slate-100 focus:outline-none focus:border-violet-400" />
@@ -1471,10 +1541,19 @@ export default function BitcoinTradingBot() {
                           Số ngày lịch sử
                           <input type="number" min={1} max={30} value={backtestDays} onChange={(e) => setBacktestDays(Number(e.target.value) || 1)} className="bg-slate-900/70 border border-slate-500 rounded-lg px-2.5 py-2 text-[11px] text-slate-100 focus:outline-none focus:border-violet-400" />
                         </label>
+                        <label className="text-[11px] text-slate-200 flex flex-col gap-1">
+                          Khung thời gian
+                          <select value={backtestInterval} onChange={(e) => setBacktestInterval(e.target.value as BacktestInterval)} className="bg-slate-900/70 border border-slate-500 rounded-lg px-2.5 py-2 text-[11px] text-slate-100 focus:outline-none focus:border-violet-400">
+                            {BACKTEST_INTERVAL_OPTIONS.map((interval) => (
+                              <option key={interval} value={interval}>{interval}</option>
+                            ))}
+                          </select>
+                        </label>
                       </div>
                       {backtestResult ? (
                         <div className="space-y-3">
                           <div className="grid grid-cols-2 gap-2 text-[11px] text-slate-100">
+                            <p>Khung: <b>{backtestInterval}</b></p>
                             <p>Tổng lệnh: <b>{backtestResult.totalTrades}</b></p>
                             <p>Win rate: <b>{backtestResult.winRate.toFixed(1)}%</b></p>
                             <p>PnL: <b className={backtestResult.netPnl >= 0 ? 'text-emerald-300' : 'text-red-300'}>{backtestResult.netPnl.toFixed(2)} USDT</b></p>

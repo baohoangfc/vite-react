@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import BitcoinTradingBot from './BtcTradingBot'
+import GoldXauTradingBot from './BtcTradingBot'
 import { CONFIG } from './config'
 
 type BackendStatus = {
@@ -48,7 +48,7 @@ function App() {
         </div>
       </div>
       <div aria-hidden className="h-20" />
-      <BitcoinTradingBot />
+      <GoldXauTradingBot />
     </div>
   )
 }

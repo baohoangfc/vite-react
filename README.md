@@ -1,4 +1,4 @@
-# BTC Trading Bot - Fullstack (Frontend + Backend)
+# Gold (XAU) Trading Bot - Fullstack (Frontend + Backend)
 
 Dự án đã được cấu hình theo hướng **fullstack** và an toàn để deploy production trên **Vercel**:
 - **Frontend**: React + Vite.
