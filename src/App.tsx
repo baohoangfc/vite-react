@@ -11,6 +11,7 @@ type BackendStatus = {
 function App() {
   const [backend, setBackend] = useState<BackendStatus | null>(null)
   const [backendError, setBackendError] = useState('')
+  const [showBackendConnected, setShowBackendConnected] = useState(false)
 
   useEffect(() => {
     const checkBackend = async () => {
@@ -21,11 +22,13 @@ function App() {
         const data = (await response.json()) as BackendStatus
         setBackend(data)
         setBackendError('')
+        setShowBackendConnected(true)
       } catch (error) {
         setBackend(null)
         setBackendError(
           error instanceof Error ? error.message : 'Cannot connect to backend',
         )
+        setShowBackendConnected(false)
       }
     }
 
@@ -34,20 +37,30 @@ function App() {
     return () => clearInterval(interval)
   }, [])
 
+  useEffect(() => {
+    if (!backend || !showBackendConnected) return
+    const timer = setTimeout(() => setShowBackendConnected(false), 1500)
+    return () => clearTimeout(timer)
+  }, [backend, showBackendConnected])
+
+  const shouldShowBanner = Boolean(backendError) || showBackendConnected
+
   return (
-    <div className="relative w-full min-h-screen bg-gradient-to-b from-slate-900 via-slate-800 to-slate-900 text-slate-100">
-      <div className="pointer-events-none fixed left-0 right-0 top-0 z-50 px-4 pt-4">
-        <div className="mx-auto max-w-6xl rounded-lg border border-slate-500/70 bg-slate-900/75 p-3 text-sm text-slate-100 shadow-lg shadow-slate-950/30 backdrop-blur">
-          {backend ? (
-            <p>
-              Backend connected: <strong>{backend.service}</strong> ({backend.status})
-            </p>
-          ) : (
-            <p className="text-red-400">Backend disconnected: {backendError}</p>
-          )}
+    <div className="relative w-full min-h-screen text-slate-100 pb-4">
+      {shouldShowBanner && (
+        <div className="pointer-events-none fixed left-0 right-0 top-0 z-50 px-4 pt-4">
+          <div className="mx-auto max-w-6xl ios-card p-3 text-sm text-slate-900">
+            {backend && showBackendConnected ? (
+              <p>
+                Backend connected: <strong>{backend.service}</strong> ({backend.status})
+              </p>
+            ) : (
+              <p className="text-rose-700">Backend disconnected: {backendError}</p>
+            )}
+          </div>
         </div>
-      </div>
-      <div aria-hidden className="h-20" />
+      )}
+      <div aria-hidden className={shouldShowBanner ? 'h-20' : 'h-4'} />
       <GoldXauTradingBot />
     </div>
   )
