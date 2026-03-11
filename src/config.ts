@@ -11,7 +11,7 @@ const getApiUrl = () => {
 };
 
 export const CONFIG = {
-    SYMBOL: 'BTCUSDT',
+    SYMBOL: 'XAUUSD',
     INTERVAL: '1m',
     LIMIT_CANDLES: 2000,
 

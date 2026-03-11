@@ -11,7 +11,7 @@ export default function SetupScreen() {
             if (str.includes('{') && str.includes('}')) str = str.substring(str.indexOf('{'), str.lastIndexOf('}') + 1);
             const parsedConfig = new Function('return ' + str)();
             if (!parsedConfig || !parsedConfig.apiKey || !parsedConfig.projectId) throw new Error("Cấu hình thiếu apiKey/projectId.");
-            localStorage.setItem('btc_firebase_cfg', JSON.stringify(parsedConfig));
+            localStorage.setItem('xau_firebase_cfg', JSON.stringify(parsedConfig));
             window.location.reload();
         } catch (e: any) { setError("Lỗi: Không thể đọc cấu hình. Vui lòng kiểm tra lại."); }
     };
