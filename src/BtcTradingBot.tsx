@@ -81,6 +81,84 @@ const EQUAL_TOLERANCE_BPS = 0.0008;
 const SCALP_COOLDOWN_MS = 90_000;
 const DEFAULT_SCALP_MARGIN = 50;
 
+const isGoldSymbol = (symbol: string) => symbol.toUpperCase().includes('XAU');
+
+const toUnixSeconds = (ms: number) => Math.floor(ms / 1000);
+
+const getYahooRangeByInterval = (interval: string) => {
+  if (interval === '1m') return '7d';
+  if (interval === '5m') return '30d';
+  if (interval === '15m') return '60d';
+  if (interval === '1h') return '730d';
+  return 'max';
+};
+
+const fetchYahooCandles = async (interval: string, limit: number, startTimeMs?: number, endTimeMs?: number): Promise<Candle[]> => {
+  const params = new URLSearchParams({
+    interval,
+    includePrePost: 'false',
+    events: 'div,splits',
+  });
+
+  if (startTimeMs && endTimeMs) {
+    params.set('period1', String(toUnixSeconds(startTimeMs)));
+    params.set('period2', String(toUnixSeconds(endTimeMs)));
+  } else {
+    params.set('range', getYahooRangeByInterval(interval));
+  }
+
+  const res = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/XAUUSD=X?${params.toString()}`);
+  if (!res.ok) throw new Error(`Yahoo chart lỗi (${res.status})`);
+
+  const data = await res.json();
+  const result = data?.chart?.result?.[0];
+  const quote = result?.indicators?.quote?.[0];
+  if (!result?.timestamp || !quote) return [];
+
+  const candles = result.timestamp.map((ts: number, idx: number) => {
+    const open = Number(quote.open?.[idx]);
+    const high = Number(quote.high?.[idx]);
+    const low = Number(quote.low?.[idx]);
+    const close = Number(quote.close?.[idx]);
+    const volume = Number(quote.volume?.[idx] ?? 0);
+    return {
+      time: ts * 1000,
+      open,
+      high,
+      low,
+      close,
+      volume,
+      isGreen: close >= open,
+    };
+  }).filter((c: Candle) => Number.isFinite(c.open) && Number.isFinite(c.high) && Number.isFinite(c.low) && Number.isFinite(c.close));
+
+  return candles.slice(-limit);
+};
+
+const fetchMarketCandles = async (symbol: string, interval: string, limit: number, startTimeMs?: number, endTimeMs?: number): Promise<Candle[]> => {
+  if (isGoldSymbol(symbol)) {
+    return fetchYahooCandles(interval, limit, startTimeMs, endTimeMs);
+  }
+
+  const query = new URLSearchParams({ symbol, interval, limit: String(limit) });
+  if (startTimeMs) query.set('startTime', String(startTimeMs));
+  if (endTimeMs) query.set('endTime', String(endTimeMs));
+
+  const res = await fetch(`https://api.binance.com/api/v3/klines?${query.toString()}`);
+  if (!res.ok) throw new Error(`Không tải được dữ liệu nến (${res.status})`);
+  const data = await res.json();
+
+  return data.map((k: any) => ({
+    time: Number(k[0]),
+    open: parseFloat(k[1]),
+    high: parseFloat(k[2]),
+    low: parseFloat(k[3]),
+    close: parseFloat(k[4]),
+    volume: parseFloat(k[5]),
+    isGreen: parseFloat(k[4]) >= parseFloat(k[1]),
+  }));
+};
+
 const buildScalpPlan = (candles: Candle[]): ScalpPlan => {
   if (candles.length < 120) {
     return {
@@ -624,34 +702,13 @@ export default function GoldXauTradingBot() {
     let cursor = startTimeMs;
 
     while (cursor < endTimeMs) {
-      const query = new URLSearchParams({
-        symbol: CONFIG.SYMBOL,
-        interval,
-        startTime: String(cursor),
-        endTime: String(endTimeMs),
-        limit: '1000',
-      });
-
-      const res = await fetch(`https://api.binance.com/api/v3/klines?${query.toString()}`);
-      if (!res.ok) throw new Error(`Không tải được dữ liệu nến (${res.status})`);
-
-      const data = await res.json();
-      if (!Array.isArray(data) || data.length === 0) break;
-
-      const formattedCandles: Candle[] = data.map((k: any) => ({
-        time: Number(k[0]),
-        open: parseFloat(k[1]),
-        high: parseFloat(k[2]),
-        low: parseFloat(k[3]),
-        close: parseFloat(k[4]),
-        volume: parseFloat(k[5]),
-        isGreen: parseFloat(k[4]) >= parseFloat(k[1]),
-      }));
+      const formattedCandles = await fetchMarketCandles(CONFIG.SYMBOL, interval, 1000, cursor, endTimeMs);
+      if (!formattedCandles.length) break;
 
       allCandles.push(...formattedCandles);
 
-      const lastOpenTime = Number(data[data.length - 1]?.[0]);
-      if (!Number.isFinite(lastOpenTime) || data.length < 1000) break;
+      const lastOpenTime = formattedCandles[formattedCandles.length - 1]?.time;
+      if (!Number.isFinite(lastOpenTime) || formattedCandles.length < 1000) break;
       cursor = lastOpenTime + 1;
     }
 
@@ -823,10 +880,9 @@ export default function GoldXauTradingBot() {
       const newSentiment: Partial<MTFSentiment> = {};
 
       for (const int of intervals) {
-        const res = await fetch(`https://api.binance.com/api/v3/klines?symbol=${CONFIG.SYMBOL}&interval=${int}&limit=${CONFIG.EMA_PERIOD + 1}`);
-        const data = await res.json();
-        if (data && data.length > 0) {
-          const closes = data.map((d: any) => parseFloat(d[4]));
+        const mtfCandles = await fetchMarketCandles(CONFIG.SYMBOL, int, CONFIG.EMA_PERIOD + 1);
+        if (mtfCandles.length > 0) {
+          const closes = mtfCandles.map((d) => d.close);
           const ema = calculateZLEMA(closes, CONFIG.EMA_PERIOD);
           const currentPrice = closes[closes.length - 1];
           const currentEma = ema[ema.length - 1];
@@ -1056,18 +1112,20 @@ export default function GoldXauTradingBot() {
   // WebSocket Loop
   useEffect(() => {
     let ws: WebSocket;
+    let poller: ReturnType<typeof setInterval> | undefined;
     const loadHistory = async () => {
       try {
-        const res = await fetch(`https://api.binance.com/api/v3/klines?symbol=${CONFIG.SYMBOL}&interval=${CONFIG.INTERVAL}&limit=${CONFIG.LIMIT_CANDLES}`);
-        const data = await res.json();
-        const formattedCandles: Candle[] = data.map((k: any) => ({
-          time: k[0], open: parseFloat(k[1]), high: parseFloat(k[2]), low: parseFloat(k[3]), close: parseFloat(k[4]), volume: parseFloat(k[5]), isGreen: parseFloat(k[4]) >= parseFloat(k[1])
-        }));
-        processAndSetData(formattedCandles);
+        const formattedCandles = await fetchMarketCandles(CONFIG.SYMBOL, CONFIG.INTERVAL, CONFIG.LIMIT_CANDLES);
+        if (formattedCandles.length) processAndSetData(formattedCandles);
       } catch (e) { console.error("Data Load Error", e); }
     };
 
     loadHistory().then(() => {
+      if (isGoldSymbol(CONFIG.SYMBOL)) {
+        poller = setInterval(loadHistory, 5000);
+        return;
+      }
+
       ws = new WebSocket(`wss://stream.binance.com:9443/ws/${CONFIG.SYMBOL.toLowerCase()}@kline_1m`);
       ws.onmessage = (e) => {
         try {
@@ -1089,7 +1147,10 @@ export default function GoldXauTradingBot() {
         } catch (err) { }
       };
     });
-    return () => ws?.close();
+    return () => {
+      ws?.close();
+      if (poller) clearInterval(poller);
+    };
   }, []);
 
   const handleOpenOrder = async (
@@ -1351,11 +1412,11 @@ export default function GoldXauTradingBot() {
   const winTrades = history.filter(t => t.pnl > 0).length;
   const winRate = history.length > 0 ? ((winTrades / history.length) * 100).toFixed(1) : 0;
 
-  if (loadingAuth) return <div className="min-h-screen bg-gradient-to-b from-slate-900 via-slate-800 to-slate-900 flex items-center justify-center"><Activity className="animate-spin text-sky-400" size={48} /></div>;
+  if (loadingAuth) return <div className="min-h-screen flex items-center justify-center"><Activity className="animate-spin text-cyan-100" size={48} /></div>;
   if (!user) return <AuthScreen />;
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-slate-900 via-slate-800 to-slate-900 text-slate-100 font-sans p-4 md:p-6 selection:bg-sky-500/30">
+    <div className="min-h-screen text-slate-100 font-sans p-3 sm:p-4 md:p-6 selection:bg-cyan-200/40">
 
       {showSettings && (
         <div className="fixed inset-0 bg-slate-800/80 z-50 flex items-center justify-center p-4 backdrop-blur-md">
@@ -1377,7 +1438,7 @@ export default function GoldXauTradingBot() {
       )}
 
       <div className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        <div className="lg:col-span-12 flex flex-col md:flex-row justify-between items-center bg-slate-800/80 backdrop-blur-xl p-5 rounded-2xl shadow-2xl border border-slate-500/50 relative overflow-hidden">
+        <div className="lg:col-span-12 flex flex-col md:flex-row justify-between items-center ios-card p-5 relative overflow-hidden">
           <div className="absolute top-0 left-0 w-full h-[2px] bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500 opacity-50"></div>
           <div className="flex flex-col sm:flex-row items-center gap-4 z-10 w-full sm:w-auto text-center sm:text-left">
             <div className="p-3 bg-gradient-to-br from-blue-600 to-purple-600 rounded-xl text-white shadow-lg shadow-blue-500/30"><Crosshair size={24} /></div>
@@ -1397,21 +1458,21 @@ export default function GoldXauTradingBot() {
               </div>
             </div>
           </div>
-          <div className="flex flex-col sm:flex-row items-center gap-4 sm:gap-6 mt-6 md:mt-0 z-10 w-full sm:w-auto pt-4 md:pt-0 border-t md:border-t-0 border-white/5 md:border-none">
-            <div className="text-center sm:text-right">
-              <p className="text-[10px] text-slate-400 font-bold tracking-widest uppercase mb-1">XAU/USD M1</p>
-              <p className={`text-2xl sm:text-3xl font-mono font-black tracking-tighter ${candles.length > 0 && currentPrice >= candles[candles.length - 1].open ? 'text-[#0ecb81] drop-shadow-[0_0_8px_#0ecb8140]' : 'text-[#f6465d] drop-shadow-[0_0_8px_#f6465d40]'}`}>{currentPrice.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
+          <div className="flex flex-col sm:flex-row items-center gap-4 sm:gap-6 mt-6 md:mt-0 z-10 w-full sm:w-auto pt-4 md:pt-0 border-t md:border-t-0 border-white/25 md:border-none">
+            <div className="text-center sm:text-right bg-white/20 border border-white/25 rounded-2xl px-4 py-2.5 min-w-[170px]">
+              <p className="text-[10px] text-slate-200 font-semibold tracking-[0.15em] uppercase mb-1">XAU/USD • M1</p>
+              <p className={`text-3xl sm:text-4xl font-mono font-black tracking-tight ${candles.length > 0 && currentPrice >= candles[candles.length - 1].open ? 'text-emerald-100' : 'text-rose-100'}`}>{currentPrice.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
             </div>
-            <button onClick={handleToggleRunning} className={`flex items-center justify-center gap-2 w-full sm:w-36 py-3.5 rounded-xl font-black uppercase tracking-widest transition-all shadow-lg active:scale-95 border ${isRunning ? 'bg-red-500/10 text-red-500 border-red-500/30 hover:bg-red-500/20' : 'bg-green-500 text-[#05070a] border-green-400 hover:bg-green-400 shadow-green-500/20'}`}>
+            <button onClick={handleToggleRunning} className={`flex items-center justify-center gap-2 w-full sm:w-40 py-3.5 rounded-2xl font-black uppercase tracking-wider transition-all active:scale-95 border ${isRunning ? 'bg-rose-200/20 text-rose-50 border-rose-200/40 hover:bg-rose-200/30' : 'bg-emerald-200 text-slate-900 border-emerald-100 hover:bg-emerald-100'}`}>
               {isRunning ? <><Pause size={16} fill="currentColor" /> NGỪNG</> : <><Play size={16} fill="currentColor" /> KHỞI ĐỘNG</>}
             </button>
           </div>
         </div>
 
-        <div className="lg:col-span-4 space-y-5 w-full">
+        <div className="lg:col-span-4 space-y-4 w-full">
           <MarketRadar analysis={analysis} />
           <WalletManager account={account} position={position} unrealizedPnl={unrealizedPnl} />
-          <div className="bg-slate-800/80 backdrop-blur-xl rounded-2xl border border-slate-500/50 p-4 shadow-xl space-y-3">
+          <div className="ios-card p-4 space-y-3">
             <div className="flex items-center justify-between">
               <h3 className="text-xs font-black tracking-widest uppercase text-orange-300">Scalp độc lập</h3>
               <div className="text-right">
@@ -1493,7 +1554,7 @@ export default function GoldXauTradingBot() {
           <BarChart candles={candles} position={position} />
           <div className="grid grid-cols-1 md:grid-cols-2 gap-5 flex-1">
             <ActivePosition position={position} currentPrice={currentPrice} unrealizedPnl={unrealizedPnl} unrealizedRoe={unrealizedRoe} onCloseOrder={handleCloseOrder} />
-            <div className="bg-slate-800/80 backdrop-blur-xl rounded-2xl border border-slate-500/50 flex flex-col overflow-hidden shadow-xl">
+            <div className="ios-card flex flex-col overflow-hidden">
               <div className="grid grid-cols-3 bg-slate-800/70 border-b border-slate-500/60 p-1 gap-1">
                 <button onClick={() => setActiveTab('LOGS')} className={`min-h-10 px-2 py-2.5 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all flex items-center justify-center gap-1.5 border border-transparent whitespace-nowrap ${activeTab === 'LOGS' ? 'bg-slate-800 text-sky-300 shadow-sm border-slate-500/60' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/60'}`}><Terminal size={12} /> Console AI</button>
                 <button onClick={() => setActiveTab('HISTORY')} className={`min-h-10 px-2 py-2.5 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all flex items-center justify-center gap-1.5 border border-transparent whitespace-nowrap ${activeTab === 'HISTORY' ? 'bg-slate-800 text-amber-300 shadow-sm border-slate-500/60' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/60'}`}><History size={12} /> Winrate: {winRate}%</button>

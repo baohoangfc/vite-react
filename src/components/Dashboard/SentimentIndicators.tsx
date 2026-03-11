@@ -7,9 +7,9 @@ interface SentimentIndicatorsProps {
 
 export default function SentimentIndicators({ sentiment }: SentimentIndicatorsProps) {
     const getBadgeColor = (type: string) => {
-        if (type === 'BULLISH') return 'bg-green-500/10 border-green-500/20 text-green-400';
-        if (type === 'BEARISH') return 'bg-red-500/10 border-red-500/20 text-red-400';
-        return 'bg-gray-500/10 border-gray-500/20 text-gray-400';
+        if (type === 'BULLISH') return 'bg-emerald-200/20 border-emerald-100/40 text-emerald-50';
+        if (type === 'BEARISH') return 'bg-rose-200/20 border-rose-100/40 text-rose-50';
+        return 'bg-white/15 border-white/25 text-slate-200';
     };
 
     const getIcon = (type: string) => {

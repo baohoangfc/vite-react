@@ -18,7 +18,7 @@ export default function ActivePosition({
     onCloseOrder
 }: ActivePositionProps) {
     return (
-        <div className={`backdrop-blur-xl p-5 rounded-2xl border transition-all duration-500 flex flex-col h-full ${position ? 'bg-gradient-to-b from-[#1e2329] to-[#0d1117] border-blue-500/30 shadow-[0_0_15px_rgba(59,130,246,0.15)]' : 'bg-[#0d1117]/80 border-white/5 opacity-80 shadow-xl'}`}>
+        <div className={`p-5 rounded-3xl border transition-all duration-500 flex flex-col h-full ${position ? 'ios-card border-cyan-100/40' : 'ios-card opacity-90'}`}>
             <h3 className="text-xs font-black text-gray-400 uppercase tracking-widest mb-4 flex justify-between items-center">
                 <span className="flex items-center gap-2"><Zap size={14} className={position ? "text-yellow-400 animate-pulse" : "text-gray-600"} /> Vị thế Active</span>
                 {position && <span className={`text-[10px] px-2 py-0.5 rounded font-black ${position.type === 'LONG' ? 'bg-green-500/20 text-green-400 border border-green-500/30' : 'bg-red-500/20 text-red-400 border border-red-500/30'}`}>{position.type} x{CONFIG.LEVERAGE}</span>}
@@ -26,7 +26,7 @@ export default function ActivePosition({
 
             {position ? (
                 <div className="space-y-4 flex-1 flex flex-col justify-between">
-                    <div className="text-center bg-[#05070a] p-3 sm:p-4 rounded-xl border border-gray-800 shadow-inner">
+                    <div className="text-center bg-white/15 p-3 sm:p-4 rounded-2xl border border-white/20">
                         <span className="text-[10px] text-gray-500 font-bold uppercase block mb-1">Lợi nhuận Tạm tính (ROE)</span>
                         <span className={`font-mono font-black text-2xl sm:text-3xl ${unrealizedPnl >= 0 ? 'text-green-400 drop-shadow-[0_0_5px_rgba(74,222,128,0.4)]' : 'text-red-400 drop-shadow-[0_0_5px_rgba(248,113,113,0.4)]'}`}>
                             {unrealizedPnl > 0 ? '+' : ''}{unrealizedPnl.toFixed(2)} <span className="text-lg">({unrealizedRoe.toFixed(1)}%)</span>
@@ -34,11 +34,11 @@ export default function ActivePosition({
                     </div>
 
                     <div className="grid grid-cols-2 gap-2 sm:gap-3 text-xs">
-                        <div className="bg-white/5 p-2 rounded-lg border border-white/5 text-center">
+                        <div className="bg-white/15 p-2 rounded-xl border border-white/20 text-center">
                             <span className="block text-[9px] text-gray-500 uppercase font-bold mb-0.5">Vào Lệnh</span>
                             <span className="text-gray-200 font-mono font-bold text-[10px] sm:text-xs">{position.entryPrice.toLocaleString()}</span>
                         </div>
-                        <div className="bg-white/5 p-2 rounded-lg border border-white/5 text-center">
+                        <div className="bg-white/15 p-2 rounded-xl border border-white/20 text-center">
                             <span className="block text-[9px] text-gray-500 uppercase font-bold mb-0.5">Ký quỹ</span>
                             <span className="text-gray-200 font-mono font-bold text-[10px] sm:text-xs">${position.margin.toFixed(1)}</span>
                         </div>
