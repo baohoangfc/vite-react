@@ -82,61 +82,85 @@ const DEFAULT_SCALP_MARGIN = 50;
 
 const isGoldSymbol = (symbol: string) => symbol.toUpperCase().includes('XAU');
 
-const toUnixSeconds = (ms: number) => Math.floor(ms / 1000);
+const fetchBinanceGoldCandles = async (interval: string, limit: number, startTimeMs?: number, endTimeMs?: number): Promise<Candle[]> => {
+  const query = new URLSearchParams({ symbol: 'XAUTUSDT', interval, limit: String(Math.min(limit, 1000)) });
+  if (startTimeMs) query.set('startTime', String(startTimeMs));
+  if (endTimeMs) query.set('endTime', String(endTimeMs));
 
-const getYahooRangeByInterval = (interval: string) => {
-  if (interval === '1m') return '7d';
-  if (interval === '5m') return '30d';
-  if (interval === '15m') return '60d';
-  if (interval === '1h') return '730d';
-  return 'max';
+  const res = await fetch(`https://api.binance.com/api/v3/klines?${query.toString()}`);
+  if (!res.ok) throw new Error(`Binance XAUTUSDT lỗi (${res.status})`);
+  const data = await res.json();
+  if (!Array.isArray(data)) return [];
+
+  return data.map((k: any) => ({
+    time: Number(k[0]),
+    open: Number(k[1]),
+    high: Number(k[2]),
+    low: Number(k[3]),
+    close: Number(k[4]),
+    volume: Number(k[5] ?? 0),
+    isGreen: Number(k[4]) >= Number(k[1]),
+  })).filter((c: Candle) => Number.isFinite(c.open) && Number.isFinite(c.high) && Number.isFinite(c.low) && Number.isFinite(c.close));
 };
 
-const fetchYahooCandles = async (interval: string, limit: number, startTimeMs?: number, endTimeMs?: number): Promise<Candle[]> => {
-  const params = new URLSearchParams({
-    interval,
-    includePrePost: 'false',
-    events: 'div,splits',
-  });
+const fetchBingxGoldCandles = async (interval: string, limit: number): Promise<Candle[]> => {
+  const query = new URLSearchParams({ symbol: 'XAU-USDT', interval, limit: String(Math.min(limit, 1000)) });
+  const res = await fetch(`https://open-api.bingx.com/openApi/swap/v3/quote/klines?${query.toString()}`);
+  if (!res.ok) throw new Error(`BingX XAU-USDT lỗi (${res.status})`);
+  const data = await res.json();
+  const rows = data?.data?.data || data?.data || [];
+  if (!Array.isArray(rows)) return [];
 
-  if (startTimeMs && endTimeMs) {
-    params.set('period1', String(toUnixSeconds(startTimeMs)));
-    params.set('period2', String(toUnixSeconds(endTimeMs)));
-  } else {
-    params.set('range', getYahooRangeByInterval(interval));
+  return rows.map((k: any) => {
+    const open = Number(k.open ?? k.o ?? k[1]);
+    const high = Number(k.high ?? k.h ?? k[2]);
+    const low = Number(k.low ?? k.l ?? k[3]);
+    const close = Number(k.close ?? k.c ?? k[4]);
+    const volume = Number(k.volume ?? k.v ?? k[5] ?? 0);
+    const t = Number(k.time ?? k.t ?? k[0]);
+    const time = t < 1_000_000_000_000 ? t * 1000 : t;
+    return { time, open, high, low, close, volume, isGreen: close >= open };
+  }).filter((c: Candle) => Number.isFinite(c.open) && Number.isFinite(c.high) && Number.isFinite(c.low) && Number.isFinite(c.close));
+};
+
+const fetchGoldCandlesViaApi = async (interval: string, limit: number, startTimeMs?: number, endTimeMs?: number): Promise<Candle[]> => {
+  const query = new URLSearchParams({ interval, limit: String(limit) });
+  if (startTimeMs) query.set('startTime', String(startTimeMs));
+  if (endTimeMs) query.set('endTime', String(endTimeMs));
+
+  const endpoints = ['/api/xau/candles', `${CONFIG.API_URL}/api/xau/candles`];
+  const tried = new Set<string>();
+
+  for (const endpoint of endpoints) {
+    if (!endpoint || tried.has(endpoint)) continue;
+    tried.add(endpoint);
+
+    try {
+      const res = await fetch(`${endpoint}?${query.toString()}`);
+      if (!res.ok) continue;
+      const data = await res.json();
+      if (Array.isArray(data?.candles) && data.candles.length > 0) {
+        return data.candles as Candle[];
+      }
+    } catch (_error) {
+      // thử endpoint tiếp theo
+    }
   }
 
-  const res = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/XAUUSD=X?${params.toString()}`);
-  if (!res.ok) throw new Error(`Yahoo chart lỗi (${res.status})`);
-
-  const data = await res.json();
-  const result = data?.chart?.result?.[0];
-  const quote = result?.indicators?.quote?.[0];
-  if (!result?.timestamp || !quote) return [];
-
-  const candles = result.timestamp.map((ts: number, idx: number) => {
-    const open = Number(quote.open?.[idx]);
-    const high = Number(quote.high?.[idx]);
-    const low = Number(quote.low?.[idx]);
-    const close = Number(quote.close?.[idx]);
-    const volume = Number(quote.volume?.[idx] ?? 0);
-    return {
-      time: ts * 1000,
-      open,
-      high,
-      low,
-      close,
-      volume,
-      isGreen: close >= open,
-    };
-  }).filter((c: Candle) => Number.isFinite(c.open) && Number.isFinite(c.high) && Number.isFinite(c.low) && Number.isFinite(c.close));
-
-  return candles.slice(-limit);
+  return [];
 };
 
 const fetchMarketCandles = async (symbol: string, interval: string, limit: number, startTimeMs?: number, endTimeMs?: number): Promise<Candle[]> => {
   if (isGoldSymbol(symbol)) {
-    return fetchYahooCandles(interval, limit, startTimeMs, endTimeMs);
+    const apiCandles = await fetchGoldCandlesViaApi(interval, limit, startTimeMs, endTimeMs);
+    if (apiCandles.length > 0) return apiCandles;
+
+    try {
+      const binanceCandles = await fetchBinanceGoldCandles(interval, limit, startTimeMs, endTimeMs);
+      if (binanceCandles.length > 0) return binanceCandles;
+    } catch (_error) { }
+
+    return fetchBingxGoldCandles(interval, limit);
   }
 
   const query = new URLSearchParams({ symbol, interval, limit: String(limit) });

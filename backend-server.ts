@@ -176,6 +176,43 @@ const fetchCandles = async (interval: string, limit: number): Promise<Candle[]> 
   return rows.map((k: any) => ({ time: Number(k[0]), open: Number(k[1]), high: Number(k[2]), low: Number(k[3]), close: Number(k[4]), volume: Number(k[5]), isGreen: Number(k[4]) >= Number(k[1]) }));
 };
 
+const fetchBinanceGoldCandles = async (interval: string, limit: number, startTimeMs?: number, endTimeMs?: number): Promise<Candle[]> => {
+  const query = new URLSearchParams({ symbol: 'XAUTUSDT', interval, limit: String(Math.min(limit, 1000)) });
+  if (startTimeMs) query.set('startTime', String(startTimeMs));
+  if (endTimeMs) query.set('endTime', String(endTimeMs));
+
+  const response = await fetch(`${BINANCE_KLINES}?${query.toString()}`);
+  if (!response.ok) throw new Error(`Binance XAUTUSDT lỗi (${response.status})`);
+  const rows = await response.json();
+  if (!Array.isArray(rows)) return [];
+  return rows
+    .map((k: any) => ({ time: Number(k[0]), open: Number(k[1]), high: Number(k[2]), low: Number(k[3]), close: Number(k[4]), volume: Number(k[5] ?? 0), isGreen: Number(k[4]) >= Number(k[1]) }))
+    .filter((c: Candle) => Number.isFinite(c.open) && Number.isFinite(c.high) && Number.isFinite(c.low) && Number.isFinite(c.close));
+};
+
+const fetchBingxGoldCandles = async (interval: string, limit: number): Promise<Candle[]> => {
+  const query = new URLSearchParams({ symbol: 'XAU-USDT', interval, limit: String(Math.min(limit, 1000)) });
+  const response = await fetch(`https://open-api.bingx.com/openApi/swap/v3/quote/klines?${query.toString()}`);
+  if (!response.ok) throw new Error(`BingX XAU-USDT lỗi (${response.status})`);
+
+  const data = await response.json();
+  const rows = data?.data?.data || data?.data || [];
+  if (!Array.isArray(rows)) return [];
+
+  return rows
+    .map((k: any) => {
+      const open = Number(k.open ?? k.o ?? k[1]);
+      const high = Number(k.high ?? k.h ?? k[2]);
+      const low = Number(k.low ?? k.l ?? k[3]);
+      const close = Number(k.close ?? k.c ?? k[4]);
+      const volume = Number(k.volume ?? k.v ?? k[5] ?? 0);
+      const t = Number(k.time ?? k.t ?? k[0]);
+      const time = t < 1_000_000_000_000 ? t * 1000 : t;
+      return { time, open, high, low, close, volume, isGreen: close >= open };
+    })
+    .filter((c: Candle) => Number.isFinite(c.open) && Number.isFinite(c.high) && Number.isFinite(c.low) && Number.isFinite(c.close));
+};
+
 const openPosition = async (type: string, price: number, signalTime: number, score: number, setup: string) => {
   const size = 50 * CONFIG.LEVERAGE; // 50 margin hardcoded for Demo
   const fee = size * CONFIG.FEE;
@@ -383,16 +420,17 @@ const collectBody = (req: IncomingMessage): Promise<any> =>
 const server = createServer(async (req, res) => {
   if (!req.url) return json(res, 400, { error: 'Invalid request' });
   if (req.method === 'OPTIONS') return json(res, 200, { ok: true });
+  const reqUrl = new URL(req.url, 'http://localhost');
 
-  if (req.method === 'GET' && req.url === '/api/health') {
+  if (req.method === 'GET' && reqUrl.pathname === '/api/health') {
     return json(res, 200, { status: 'ok', service: 'btc-trading-bot-backend', timestamp: new Date().toISOString() });
   }
 
-  if (req.method === 'GET' && req.url === '/api/config') {
+  if (req.method === 'GET' && reqUrl.pathname === '/api/config') {
     return json(res, 200, { symbol: runtimeState.symbol, mode: 'paper-trading-background', interval: CONFIG.INTERVAL });
   }
 
-  if (req.method === 'GET' && req.url === '/api/runtime') {
+  if (req.method === 'GET' && reqUrl.pathname === '/api/runtime') {
     return json(res, 200, {
       isRunning: runtimeState.isRunning,
       startedAt: runtimeState.startedAt,
@@ -408,7 +446,25 @@ const server = createServer(async (req, res) => {
     });
   }
 
-  if (req.method === 'POST' && req.url === '/api/runtime') {
+  if (req.method === 'GET' && reqUrl.pathname === '/api/xau/candles') {
+    try {
+      const interval = String(reqUrl.searchParams.get('interval') || '1m');
+      const limit = Math.max(1, Math.min(5000, Number(reqUrl.searchParams.get('limit') || 2000)));
+      const startTime = Number(reqUrl.searchParams.get('startTime') || 0);
+      const endTime = Number(reqUrl.searchParams.get('endTime') || 0);
+      try {
+        const candles = await fetchBinanceGoldCandles(interval, limit, startTime || undefined, endTime || undefined);
+        if (candles.length > 0) return json(res, 200, { ok: true, source: 'binance', candles });
+      } catch (_error) { }
+
+      const candles = await fetchBingxGoldCandles(interval, limit);
+      return json(res, 200, { ok: true, source: 'bingx', candles });
+    } catch (error: any) {
+      return json(res, 500, { ok: false, error: error?.message || 'Không thể tải dữ liệu XAU/USD từ Binance/BingX' });
+    }
+  }
+
+  if (req.method === 'POST' && reqUrl.pathname === '/api/runtime') {
     try {
       const payload = await collectBody(req);
       runtimeState.isRunning = Boolean(payload?.isRunning);
