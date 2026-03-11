@@ -22,7 +22,6 @@ import {
 import SetupScreen from './components/SetupScreen';
 import AuthScreen from './components/AuthScreen';
 import MarketRadar from './components/Dashboard/MarketRadar';
-import BarChart from './components/Dashboard/BarChart';
 import WalletManager from './components/Dashboard/WalletManager';
 import ActivePosition from './components/Dashboard/ActivePosition';
 import DailyAggregation from './components/Dashboard/DailyAggregation';
@@ -1551,7 +1550,14 @@ export default function GoldXauTradingBot() {
         </div>
 
         <div className="lg:col-span-8 space-y-5 w-full flex flex-col h-full">
-          <BarChart candles={candles} position={position} />
+          <div className="ios-card p-6 border border-amber-100/20">
+            <p className="text-xs uppercase tracking-[0.2em] text-amber-200 font-semibold">Gold price (XAU/USD)</p>
+            <p className={`mt-2 text-4xl sm:text-5xl font-black tracking-tight ${candles.length > 0 && currentPrice >= candles[candles.length - 1].open ? 'text-emerald-300' : 'text-rose-300'}`}>
+              {currentPrice.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+              <span className="ml-2 text-lg font-semibold text-slate-300">USD</span>
+            </p>
+            <p className="mt-2 text-xs text-slate-400">Giao diện đã bỏ biểu đồ, chỉ giữ hiển thị giá vàng theo thời gian thực.</p>
+          </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-5 flex-1">
             <ActivePosition position={position} currentPrice={currentPrice} unrealizedPnl={unrealizedPnl} unrealizedRoe={unrealizedRoe} onCloseOrder={handleCloseOrder} />
             <div className="ios-card flex flex-col overflow-hidden">
