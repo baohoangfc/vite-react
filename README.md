@@ -2,7 +2,7 @@
 
 Dự án đã được cấu hình theo hướng **fullstack** và an toàn để deploy production trên **Vercel**:
 - **Frontend**: React + Vite.
-- **Backend local (dev)**: Node HTTP server tại `backend-server.mjs`.
+- **Backend local (dev)**: Node HTTP server tại `backend-server.ts`.
 - **Backend production (Vercel)**: Serverless Functions tại thư mục `api/`.
 
 ## Cài đặt
@@ -23,6 +23,7 @@ npm run dev
 - `npm run dev:frontend`: chạy Vite frontend.
 - `npm run dev:backend`: chạy backend local ở `http://localhost:3001`.
 - `npm run build`: build frontend production.
+- `npm run lint`: chạy TypeScript type-check (`tsc --noEmit`).
 - `npm run preview`: preview frontend build.
 
 ## API
