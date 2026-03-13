@@ -88,14 +88,40 @@ const json = (res: ServerResponse, statusCode: number, payload: any) => {
 };
 
 const sendTelegram = async (text: string) => {
-  if (!runtimeState.token || !runtimeState.chatId) return;
+  if (!runtimeState.token || !runtimeState.chatId) {
+    return { ok: false, reason: 'missing-config' as const };
+  }
+
   try {
-    await fetch(`https://api.telegram.org/bot${runtimeState.token}/sendMessage`, {
+    const response = await fetch(`https://api.telegram.org/bot${runtimeState.token}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ chat_id: runtimeState.chatId, text, parse_mode: 'HTML' }),
     });
-  } catch (_error) { }
+
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || payload?.ok === false) {
+      console.error('Telegram send failed:', {
+        status: response.status,
+        description: payload?.description || 'unknown-error',
+      });
+      return {
+        ok: false,
+        reason: 'telegram-api-error' as const,
+        status: response.status,
+        description: payload?.description || 'unknown-error',
+      };
+    }
+
+    return { ok: true };
+  } catch (error: any) {
+    console.error('Telegram send exception:', error?.message || error);
+    return {
+      ok: false,
+      reason: 'network-error' as const,
+      description: error?.message || 'network-error',
+    };
+  }
 };
 
 const stopHeartbeat = () => {
@@ -523,6 +549,39 @@ const server = createServer(async (req, res) => {
       }
 
       return json(res, 200, { ok: true, isRunning: runtimeState.isRunning, startedAt: runtimeState.startedAt });
+    } catch (error: any) {
+      return json(res, 400, { ok: false, error: error?.message || 'Bad request' });
+    }
+  }
+
+  if (req.method === 'POST' && reqUrl.pathname === '/api/telegram/test') {
+    try {
+      const payload = await collectBody(req);
+      const token = String(payload?.token || runtimeState.token || '').trim();
+      const chatId = String(payload?.chatId || runtimeState.chatId || '').trim();
+
+      if (!token || !chatId) {
+        return json(res, 400, {
+          ok: false,
+          error: 'Missing telegram token/chatId. Set BOT_TELEGRAM_TOKEN + BOT_TELEGRAM_CHAT_ID hoặc truyền trong body.',
+        });
+      }
+
+      runtimeState.token = token;
+      runtimeState.chatId = chatId;
+      persistRuntimeState();
+
+      const text = String(
+        payload?.text ||
+        `🧪 <b>Telegram test notification</b>\n• Time: ${new Date().toISOString()}\n• Symbol: ${runtimeState.symbol}`,
+      );
+
+      const result = await sendTelegram(text);
+      if (!result.ok) {
+        return json(res, 502, { ok: false, result });
+      }
+
+      return json(res, 200, { ok: true, result });
     } catch (error: any) {
       return json(res, 400, { ok: false, error: error?.message || 'Bad request' });
     }
