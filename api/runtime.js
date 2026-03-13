@@ -3,10 +3,10 @@ export default function handler(req, res) {
     res.status(200).json({
       isRunning: false,
       startedAt: null,
-      symbol: 'BTCUSDT',
+      symbol: 'XAUUSD',
       heartbeatMs: 600000,
       background: false,
-      note: 'Background runtime is only available in local backend-server.mjs process.',
+      note: 'Background runtime is only available in local backend-server.ts process.',
     })
     return
   }

@@ -7,6 +7,10 @@ import { calculateZLEMA, calculateSMA, calculateRSI, getMACD, detectSMC, calcula
 import { Candle, Analysis, MTFSentiment } from './src/types';
 
 const port = Number(process.env.PORT || 3001);
+const AUTO_START = String(process.env.BOT_AUTO_START || 'true').toLowerCase() !== 'false';
+const ENV_BOT_SYMBOL = String(process.env.BOT_SYMBOL || '').trim();
+const ENV_TG_TOKEN = String(process.env.BOT_TELEGRAM_TOKEN || '').trim();
+const ENV_TG_CHAT_ID = String(process.env.BOT_TELEGRAM_CHAT_ID || '').trim();
 const BINANCE_KLINES = 'https://api.binance.com/api/v3/klines';
 const RUNTIME_STORE_PATH = resolve(process.cwd(), '.runtime-state.json');
 
@@ -64,6 +68,13 @@ const restoreRuntimeState = () => {
     const data = JSON.parse(readFileSync(RUNTIME_STORE_PATH, 'utf-8'));
     Object.assign(runtimeState, data);
   } catch (_error) { }
+};
+
+
+const applyEnvRuntimeOverrides = () => {
+  if (ENV_BOT_SYMBOL) runtimeState.symbol = ENV_BOT_SYMBOL;
+  if (ENV_TG_TOKEN) runtimeState.token = ENV_TG_TOKEN;
+  if (ENV_TG_CHAT_ID) runtimeState.chatId = ENV_TG_CHAT_ID;
 };
 
 const json = (res: ServerResponse, statusCode: number, payload: any) => {
@@ -521,6 +532,16 @@ const server = createServer(async (req, res) => {
 });
 
 restoreRuntimeState();
+applyEnvRuntimeOverrides();
+
+// Chạy backend theo mô hình daemon: mặc định tự bật bot kể cả khi FE không mở.
+if (AUTO_START && !runtimeState.isRunning) {
+  runtimeState.isRunning = true;
+  runtimeState.startedAt = new Date().toISOString();
+  runtimeState.pausedReason = '';
+  persistRuntimeState();
+}
+
 if (runtimeState.isRunning) {
   startHeartbeat();
   startEngine();
@@ -529,4 +550,6 @@ if (runtimeState.isRunning) {
 server.listen(port, () => {
   console.log(`Backend SMC Engine running at http://localhost:${port}`);
   console.log(`Firebase Interop: ${db ? 'ACTIVE' : 'INACTIVE'}`);
+  console.log(`Auto-start mode: ${AUTO_START ? 'ENABLED' : 'DISABLED'}`);
+  console.log(`Symbol: ${runtimeState.symbol} | Telegram: ${runtimeState.token && runtimeState.chatId ? 'CONFIGURED' : 'NOT CONFIGURED'}`);
 });

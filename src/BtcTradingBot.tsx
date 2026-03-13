@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { onAuthStateChanged, signOut, User } from 'firebase/auth';
 import { doc, setDoc, onSnapshot, collection } from 'firebase/firestore';
 import {
-  Crosshair, Play, Pause, Settings, Layers,
+  Crosshair, Settings, Layers,
   Terminal, History, Activity
 } from 'lucide-react';
 
@@ -514,8 +514,6 @@ export default function GoldXauTradingBot() {
   const [scalpHistory, setScalpHistory] = useState<TradeHistoryItem[]>([]);
   const [scalpBalance, setScalpBalance] = useState<number>(300); // Mặc định 300 USDT cho scalp
   const [scalpPlan, setScalpPlan] = useState<ScalpPlan>(() => buildScalpPlan([]));
-  const [syncingRunningState, setSyncingRunningState] = useState(false);
-  const [controllerSessionId, setControllerSessionId] = useState<string | null>(null);
 
   // Trading State (Cloud Synced)
   const [account, setAccount] = useState<Account>({ balance: CONFIG.INITIAL_BALANCE, pnlHistory: 0 });
@@ -542,9 +540,7 @@ export default function GoldXauTradingBot() {
   const scalpPositionRef = useRef<Position | null>(null);
   const lastScalpSignalRef = useRef(0);
   const lastScalpGuardLogRef = useRef(0);
-  const clientSessionIdRef = useRef(`session_${Math.random().toString(36).slice(2)}_${Date.now()}`);
-  const isControllerSession = !controllerSessionId || controllerSessionId === clientSessionIdRef.current;
-  const shouldRunLocalBot = isRunning && !runtimeOnline && isControllerSession;
+  const shouldRunLocalBot = false; // FE chỉ hiển thị; bot chạy nền hoàn toàn ở backend.
 
   // Sync refs
   useEffect(() => { tgConfigRef.current = tgConfig; }, [tgConfig]);
@@ -571,9 +567,8 @@ export default function GoldXauTradingBot() {
     });
   }, [scalpPlan]);
   useEffect(() => {
-    const isLocalController = !controllerSessionId || controllerSessionId === clientSessionIdRef.current;
-    isTradingActive.current = isRunning && !runtimeOnline && isLocalController;
-  }, [isRunning, runtimeOnline, controllerSessionId]); // Added
+    isTradingActive.current = isRunning && !runtimeOnline;
+  }, [isRunning, runtimeOnline]); // Added
   useEffect(() => { scalpPositionRef.current = scalpPosition; }, [scalpPosition]);
 
   // Auth Init
@@ -622,15 +617,12 @@ export default function GoldXauTradingBot() {
 
     const unsubRuntime = onSnapshot(runtimeRef, (d) => {
       if (!d.exists()) {
-        setDoc(runtimeRef, { isRunning: false, controllerSessionId: null }, { merge: true });
+        setDoc(runtimeRef, { isRunning: false }, { merge: true });
         return;
       }
 
       const remoteRunning = Boolean(d.data().isRunning);
-      const remoteController = typeof d.data().controllerSessionId === 'string' ? d.data().controllerSessionId : null;
       setIsRunning((prev) => (prev === remoteRunning ? prev : remoteRunning));
-      setControllerSessionId(remoteController);
-      setSyncingRunningState(false);
     });
 
     const unsubScalpPos = onSnapshot(scalpPosRef, (d) => {
@@ -658,66 +650,6 @@ export default function GoldXauTradingBot() {
     try { await fetch(`https://api.telegram.org/bot${token}/sendMessage`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'HTML' }) }); } catch (e) { }
   };
 
-
-  const syncRuntimeState = async (running: boolean) => {
-    try {
-      const response = await fetch(`${CONFIG.API_URL}/api/runtime`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          isRunning: running,
-          token: tgConfigRef.current.token,
-          chatId: tgConfigRef.current.chatId,
-          symbol: CONFIG.SYMBOL,
-          heartbeatMs: CONFIG.HEARTBEAT_MS,
-          uid: user?.uid,
-          appId: APP_ID,
-        }),
-      });
-      setRuntimeOnline(response.ok);
-    } catch (error) {
-      setRuntimeOnline(false);
-    }
-  };
-
-  const updateUserRunningState = async (running: boolean, nextControllerSessionId: string | null) => {
-    if (!user) return;
-    const runtimeRef = doc(db, 'artifacts', APP_ID, 'users', user.uid, 'runtime', 'state');
-    await setDoc(runtimeRef, {
-      isRunning: running,
-      controllerSessionId: nextControllerSessionId,
-      updatedAt: Date.now(),
-    }, { merge: true });
-  };
-
-  const syncRuntimePositionState = async (details: Position | null) => {
-    if (!user) return;
-    const posRef = doc(db, 'artifacts', APP_ID, 'users', user.uid, 'position', 'active');
-    if (details) {
-      await setDoc(posRef, { active: true, details }, { merge: true });
-      return;
-    }
-    await setDoc(posRef, { active: false }, { merge: true });
-  };
-
-  const handleToggleRunning = async () => {
-    if (!user || syncingRunningState) return;
-
-    const nextRunning = !isRunning;
-    const nextControllerSessionId = nextRunning ? clientSessionIdRef.current : null;
-    setSyncingRunningState(true);
-    setIsRunning(nextRunning);
-    setControllerSessionId(nextControllerSessionId);
-    try {
-      await updateUserRunningState(nextRunning, nextControllerSessionId);
-      await syncRuntimeState(nextRunning);
-    } catch (error) {
-      setIsRunning(!nextRunning);
-      setControllerSessionId(controllerSessionId);
-      setSyncingRunningState(false);
-      addLog('Không thể đồng bộ trạng thái bot giữa các phiên đăng nhập.', 'warning');
-    }
-  };
 
   const fetchHistoricalCandles = async (endTimeMs: number, days: number, interval: BacktestInterval) => {
     const dayMs = 24 * 60 * 60 * 1000;
@@ -790,9 +722,6 @@ export default function GoldXauTradingBot() {
         setRuntimeOnline(Boolean(data.background));
         if (typeof data.isRunning === 'boolean') {
           setIsRunning(data.isRunning);
-          if (user && data.background) {
-            void updateUserRunningState(data.isRunning, 'runtime-server');
-          }
         }
       } catch (error) {
         setRuntimeOnline(false);
@@ -813,9 +742,6 @@ export default function GoldXauTradingBot() {
 
         if (typeof data.isRunning === 'boolean') {
           setIsRunning(data.isRunning);
-          if (user && data.background) {
-            void updateUserRunningState(data.isRunning, 'runtime-server');
-          }
         }
         if (typeof data.balance === 'number' || typeof data.pnlHistory === 'number') {
           setAccount((prev) => ({
@@ -1475,7 +1401,7 @@ export default function GoldXauTradingBot() {
                 <span className="flex items-center gap-1"><Layers size={12} /> SMC Engine</span>
                 <span className="border-l border-slate-500/60 pl-2 sm:pl-3 text-sky-300 font-bold tracking-widest uppercase">LEV x{CONFIG.LEVERAGE}</span>
                 <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${runtimeOnline ? 'bg-emerald-500/20 text-emerald-300' : 'bg-amber-500/20 text-amber-200'}`}>
-                  {runtimeOnline ? 'Background ON' : 'Background OFF'}
+                  {runtimeOnline ? 'Backend 24/7 ONLINE' : 'Đang kết nối backend...'}
                 </span>
                 <button onClick={() => setShowSettings(true)} className="ml-0 sm:ml-2 hover:text-white transition-colors underline decoration-slate-500/60 underline-offset-2">Telegram</button>
                 <button onClick={() => signOut(auth)} className="text-red-400 hover:text-red-300 transition-colors ml-0 sm:ml-2">Đăng xuất</button>
@@ -1487,9 +1413,9 @@ export default function GoldXauTradingBot() {
               <p className="text-[10px] text-slate-200 font-semibold tracking-[0.15em] uppercase mb-1">XAU/USD • M1</p>
               <p className={`text-3xl sm:text-4xl font-mono font-black tracking-tight ${candles.length > 0 && currentPrice >= candles[candles.length - 1].open ? 'text-emerald-100' : 'text-rose-100'}`}>{currentPrice.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
             </div>
-            <button onClick={handleToggleRunning} className={`flex items-center justify-center gap-2 w-full sm:w-40 py-3.5 rounded-2xl font-black uppercase tracking-wider transition-all active:scale-95 border ${isRunning ? 'bg-rose-200/20 text-rose-50 border-rose-200/40 hover:bg-rose-200/30' : 'bg-emerald-200 text-slate-900 border-emerald-100 hover:bg-emerald-100'}`}>
-              {isRunning ? <><Pause size={16} fill="currentColor" /> NGỪNG</> : <><Play size={16} fill="currentColor" /> KHỞI ĐỘNG</>}
-            </button>
+            <div className="w-full sm:w-52 py-3.5 rounded-2xl font-black uppercase tracking-wider border border-cyan-300/40 bg-cyan-500/10 text-cyan-100 text-center">
+              Backend daemon 24/7
+            </div>
           </div>
         </div>
 
