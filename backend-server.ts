@@ -51,8 +51,40 @@ const runtimeState: any = {
   tradesToday: 0,
   consecutiveErrors: 0,
   pausedReason: '',
+  lastHeartbeatAt: null,
+  lastTrade: null,
   uid: '',
   appId: '',
+};
+
+const resolveHeartbeatMs = (value: unknown) => {
+  const fallback = Number(CONFIG.HEARTBEAT_MS) || 10 * 60 * 1000;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return Math.max(60_000, parsed);
+};
+
+const buildHeartbeatMessage = () => {
+  const uptimeMinutes = Math.floor((Date.now() - new Date(runtimeState.startedAt || Date.now()).getTime()) / 60000);
+  const posText = runtimeState.position
+    ? `${runtimeState.position.type} @ ${runtimeState.position.entryPrice.toFixed(2)} | TP ${runtimeState.position.tpPrice.toFixed(2)} | SL ${runtimeState.position.slPrice.toFixed(2)}`
+    : 'Không có lệnh mở';
+  const lastTrade = runtimeState.lastTrade
+    ? `${runtimeState.lastTrade.type} (${runtimeState.lastTrade.reason}) | PnL ${runtimeState.lastTrade.pnl >= 0 ? '+' : ''}${runtimeState.lastTrade.pnl.toFixed(2)} USDT`
+    : 'Chưa có lệnh đóng trong phiên chạy hiện tại';
+
+  return `💓 <b>BOT BACKGROUND ĐANG CHẠY</b>\n• Cặp: ${runtimeState.symbol}\n• Uptime: ${uptimeMinutes} phút\n• Trạng thái: ${runtimeState.isRunning ? 'RUNNING' : 'STOPPED'}\n• Position: ${posText}\n• Balance: ${runtimeState.balance.toFixed(2)} USDT\n• PnL hôm nay: ${runtimeState.pnlToday.toFixed(2)} USDT\n• Số lệnh hôm nay: ${runtimeState.tradesToday}\n• Giao dịch gần nhất: ${lastTrade}`;
+};
+
+const sendHeartbeat = async () => {
+  const result = await sendTelegram(buildHeartbeatMessage());
+  runtimeState.lastHeartbeatAt = new Date().toISOString();
+  persistRuntimeState();
+
+  if (!result.ok) {
+    console.error('Heartbeat telegram failed:', result);
+  }
+  return result;
 };
 
 const persistRuntimeState = () => {
@@ -133,12 +165,7 @@ const stopHeartbeat = () => {
 
 const startHeartbeat = () => {
   stopHeartbeat();
-  runtimeState.heartbeatTimer = setInterval(() => {
-    const posText = runtimeState.position ? `${runtimeState.position.type} @ ${runtimeState.position.entryPrice.toFixed(2)}` : 'Không có lệnh mở';
-    sendTelegram(
-      `💓 <b>BOT BACKGROUND ĐANG CHẠY</b>\n• Cặp: ${runtimeState.symbol}\n• Uptime: ${Math.floor((Date.now() - new Date(runtimeState.startedAt || Date.now()).getTime()) / 60000)} phút\n• Position: ${posText}\n• Balance: ${runtimeState.balance.toFixed(2)} USDT\n• PnL hôm nay: ${runtimeState.pnlToday.toFixed(2)} USDT`,
-    );
-  }, runtimeState.heartbeatMs);
+  runtimeState.heartbeatTimer = setInterval(sendHeartbeat, runtimeState.heartbeatMs);
 };
 
 const refreshDailyState = () => {
@@ -311,6 +338,14 @@ const closePosition = async (reason: string, currentPrice: number) => {
   runtimeState.pnlHistory += finalPnl;
   runtimeState.pnlToday += finalPnl;
   runtimeState.tradesToday += 1;
+  runtimeState.lastTrade = {
+    type: position.type,
+    reason,
+    pnl: finalPnl,
+    at: Date.now(),
+    entry: position.entryPrice,
+    exit: currentPrice,
+  };
   runtimeState.position = null;
   persistRuntimeState();
 
@@ -526,7 +561,7 @@ const server = createServer(async (req, res) => {
       runtimeState.token = String(payload?.token || runtimeState.token || '');
       runtimeState.chatId = String(payload?.chatId || runtimeState.chatId || '');
       runtimeState.symbol = String(payload?.symbol || runtimeState.symbol || CONFIG.SYMBOL);
-      runtimeState.heartbeatMs = Number(payload?.heartbeatMs || runtimeState.heartbeatMs || CONFIG.HEARTBEAT_MS);
+      runtimeState.heartbeatMs = resolveHeartbeatMs(payload?.heartbeatMs || runtimeState.heartbeatMs || CONFIG.HEARTBEAT_MS);
 
       // Khóa quan trọng để kết nối với Firebase đúng User
       if (payload?.uid) runtimeState.uid = String(payload.uid);
@@ -541,6 +576,7 @@ const server = createServer(async (req, res) => {
         // Khởi động lại engine và reset bộ đếm lỗi
         runtimeState.consecutiveErrors = 0;
         startHeartbeat();
+        await sendHeartbeat();
         startEngine();
       } else {
         stopHeartbeat();
@@ -587,11 +623,42 @@ const server = createServer(async (req, res) => {
     }
   }
 
+  if (req.method === 'POST' && reqUrl.pathname === '/api/telegram/heartbeat') {
+    try {
+      const payload = await collectBody(req);
+      const token = String(payload?.token || runtimeState.token || '').trim();
+      const chatId = String(payload?.chatId || runtimeState.chatId || '').trim();
+
+      if (!token || !chatId) {
+        return json(res, 400, {
+          ok: false,
+          error: 'Missing telegram token/chatId. Set BOT_TELEGRAM_TOKEN + BOT_TELEGRAM_CHAT_ID hoặc truyền trong body.',
+        });
+      }
+
+      runtimeState.token = token;
+      runtimeState.chatId = chatId;
+      persistRuntimeState();
+
+      const result = await sendHeartbeat();
+      if (!result.ok) return json(res, 502, { ok: false, result });
+
+      return json(res, 200, {
+        ok: true,
+        heartbeatMs: runtimeState.heartbeatMs,
+        lastHeartbeatAt: runtimeState.lastHeartbeatAt,
+      });
+    } catch (error: any) {
+      return json(res, 400, { ok: false, error: error?.message || 'Bad request' });
+    }
+  }
+
   return json(res, 404, { error: 'Not found' });
 });
 
 restoreRuntimeState();
 applyEnvRuntimeOverrides();
+runtimeState.heartbeatMs = resolveHeartbeatMs(runtimeState.heartbeatMs || CONFIG.HEARTBEAT_MS);
 
 // Chạy backend theo mô hình daemon: mặc định tự bật bot kể cả khi FE không mở.
 if (AUTO_START && !runtimeState.isRunning) {
