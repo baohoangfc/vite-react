@@ -556,8 +556,20 @@ const server = createServer(async (req, res) => {
   if (req.method === 'POST' && reqUrl.pathname === '/api/runtime') {
     try {
       const payload = await collectBody(req);
-      runtimeState.isRunning = Boolean(payload?.isRunning);
-      runtimeState.startedAt = runtimeState.isRunning ? new Date().toISOString() : null;
+      const hadRunningState = Boolean(runtimeState.isRunning);
+      const requestedRunning = typeof payload?.isRunning === 'boolean' ? payload.isRunning : undefined;
+
+      if (typeof requestedRunning === 'boolean') {
+        runtimeState.isRunning = requestedRunning;
+        if (requestedRunning) {
+          runtimeState.startedAt = hadRunningState && runtimeState.startedAt
+            ? runtimeState.startedAt
+            : new Date().toISOString();
+        } else {
+          runtimeState.startedAt = null;
+        }
+      }
+
       runtimeState.token = String(payload?.token || runtimeState.token || '');
       runtimeState.chatId = String(payload?.chatId || runtimeState.chatId || '');
       runtimeState.symbol = String(payload?.symbol || runtimeState.symbol || CONFIG.SYMBOL);
@@ -571,14 +583,22 @@ const server = createServer(async (req, res) => {
 
       persistRuntimeState();
 
+      const runningTransition = typeof requestedRunning === 'boolean' && requestedRunning !== hadRunningState;
+
       if (runtimeState.isRunning) {
-        await sendTelegram(`🟢 <b>BACKGROUND BOT START</b>\n• Cặp: ${runtimeState.symbol}\n• Chế độ: Nhúng SMC Algorithm & Firebase Sync`);
-        // Khởi động lại engine và reset bộ đếm lỗi
-        runtimeState.consecutiveErrors = 0;
+        // Luôn đảm bảo heartbeat chạy đúng chu kỳ mới nhất (vd: 10 phút)
         startHeartbeat();
-        await sendHeartbeat();
-        startEngine();
-      } else {
+
+        if (runningTransition) {
+          await sendTelegram(`🟢 <b>BACKGROUND BOT START</b>\n• Cặp: ${runtimeState.symbol}\n• Chế độ: Nhúng SMC Algorithm & Firebase Sync`);
+          runtimeState.consecutiveErrors = 0;
+          await sendHeartbeat();
+          startEngine();
+        } else {
+          // Runtime đang chạy: chỉ cần đảm bảo engine active, không spam noti START.
+          if (!runtimeState.engineTimer) startEngine();
+        }
+      } else if (runningTransition) {
         stopHeartbeat();
         stopEngine();
         await sendTelegram('🔴 <b>BACKGROUND BOT STOP</b>\n• Bot ngầm đã dừng theo trạng thái nút KHỞI ĐỘNG trên Web.');
