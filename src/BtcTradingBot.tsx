@@ -644,6 +644,24 @@ export default function GoldXauTradingBot() {
     setLogs(prev => [...prev.slice(-99), { msg: `[${timestamp}] ${message}`, type }]);
   };
 
+  const syncTelegramToRuntime = async (token: string, chatId: string) => {
+    if (!runtimeOnline) return;
+
+    await fetch(`${CONFIG.API_URL}/api/runtime`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        isRunning,
+        token,
+        chatId,
+        symbol: CONFIG.SYMBOL,
+        heartbeatMs: CONFIG.HEARTBEAT_MS,
+        uid: user?.uid,
+        appId: APP_ID,
+      }),
+    });
+  };
+
   const sendTelegram = async (text: string) => {
     const { token, chatId } = tgConfigRef.current;
     if (!token || !chatId) return;
@@ -1380,7 +1398,32 @@ export default function GoldXauTradingBot() {
               <button onClick={() => setShowSettings(false)} className="flex-1 py-3 text-slate-300 font-bold hover:text-white transition-colors">HỦY</button>
               <button onClick={async () => {
                 await setDoc(doc(db, 'artifacts', APP_ID, 'users', user.uid, 'account', 'data'), { tgToken: tgConfig.token, tgChatId: tgConfig.chatId }, { merge: true });
-                setShowSettings(false); addLog("Đã lưu cấu hình Telegram lên Cloud.", "success");
+                await syncTelegramToRuntime(tgConfig.token.trim(), tgConfig.chatId.trim());
+
+                if (tgConfig.token.trim() && tgConfig.chatId.trim() && runtimeOnline) {
+                  try {
+                    const resp = await fetch(`${CONFIG.API_URL}/api/telegram/test`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                        token: tgConfig.token.trim(),
+                        chatId: tgConfig.chatId.trim(),
+                        text: `✅ <b>Telegram đã kết nối</b>\n• Time: ${new Date().toISOString()}\n• Runtime: ${isRunning ? 'RUNNING' : 'STOPPED'}`,
+                      }),
+                    });
+                    if (!resp.ok) {
+                      const data = await resp.json().catch(() => ({}));
+                      addLog(`Không gửi được test noti Telegram: ${data?.error || data?.result?.description || 'unknown-error'}`, 'danger');
+                    } else {
+                      addLog('Đã gửi test notification Telegram thành công.', 'success');
+                    }
+                  } catch (e: any) {
+                    addLog(`Lỗi kết nối backend khi test Telegram: ${e?.message || 'network-error'}`, 'danger');
+                  }
+                }
+
+                setShowSettings(false);
+                addLog("Đã lưu cấu hình Telegram lên Cloud.", "success");
               }} className="flex-1 py-3 bg-blue-600 rounded-xl text-white font-black hover:bg-blue-500 transition-colors shadow-lg shadow-blue-500/20">LƯU CÀI ĐẶT</button>
             </div>
           </div>
